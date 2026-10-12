@@ -51,5 +51,5 @@ Every backend defaults to a DeepSeek Flash model, and the launcher, the resident
 
 ## License / 授權
 
-MIT — see `repo/LICENSE` (original copyright Ali Attaran).
-MIT，見 `repo/LICENSE`（原著作權 Ali Attaran）。
+MIT — see `LICENSE` (original copyright Ali Attaran).
+MIT，見 `LICENSE`（原著作權 Ali Attaran）。
