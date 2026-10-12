@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# api-probe <url> <keyfile> [body-json] — fire one keyed POST to a real API endpoint and
+# print the 4xx error body as the ground-truth wire shape (fix 9356). Never uses the
+# result, never exits non-zero; the probe is an evidence-gathering step only.
+# stdout line 1: http=<code>; then up to 4000 bytes of the raw body. connect failure: http=000.
+set -u
+url="$1"
+keyfile="$2"
+body="${3:-{}}"
+
+# ponytail: no temp files — the main session runs this inside the Claude sandbox where
+# mktemp on $TMPDIR/var/folders is denied. Body and code ride one stdout, split on the
+# trailing "\n<code>" curl -w appends.
+resp=$(curl -sS -w '\n%{http_code}' \
+  --max-time 30 \
+  -X POST \
+  -H "Authorization: Bearer $(tr -d '\r\n' < "$keyfile")" \
+  -H 'Content-Type: application/json' \
+  -d "$body" \
+  "$url" 2>&1)
+code=${resp##*$'\n'}
+resp=${resp%$'\n'*}
+
+printf 'http=%s\n' "$code"
+if [ "$code" = 000 ] || [ -z "$code" ]; then
+  printf 'curl error: %s\n' "$resp" >&2
+else
+  # raw first 4000 bytes, no parsing — the 4xx body IS the schema (fix 9356)
+  printf '%s' "$resp" | head -c 4000
+  printf '\n'
+fi
+exit 0

@@ -1,0 +1,117 @@
+#!/bin/bash
+# deep-run <task.md> [cwd] — the only entry point that runs deepclaude outside the
+# sandbox (settings.json sandbox.excludedCommands). Logs paths and rc only, never
+# content, never credential values.
+#
+# R6: detaches the actual model run (deep-run-inner) into a tmux session so it
+# survives the caller being kill -9'd. The foreground half of deep-run only waits on
+# the session, then replays work/.deep/<epoch>.out and exits with <epoch>.rc. The
+# tmux socket is private (tmux -L deep), so no shared-session surprises. Set
+# DEEP_NO_TMUX=1 to run the inner directly (tests / debugging) — no tmux needed.
+#
+# Slimming flags (measured 2026-09-12): default prefix 22,132 → ~5.5k tokens/turn,
+# and the creds-egress-guard PreToolUse hook still fires. No `--bare`: the docs say
+# it skips hooks, and it does — measured, even with --settings — which disarms the
+# guard.
+#
+# GH_TOKEN: the gh keyring is unusable headless, so the value is injected from the
+# kv mirror instead; that is what lets deep `gh search` for an existing wheel.
+set -u
+
+# 全身包進 main()：bash 一次解析完整個函式才執行，工單就地改寫 deep-run 本身時
+# 不會讓剩下的腳本依舊位元組偏移續讀（2026-09-24 實證：收尾變成
+# `line 106: R/<epoch>.rc): No such file or directory`，輸出與 rc 全丟）。
+main() {
+DC_HOME="${DC_HOME:-$HOME/.deepclaude}"
+CREDS_DIR="${CREDS_DIR:-$HOME/.creds}"
+# launchd and sandbox-excluded shells hand over a minimal PATH; deepclaude and node
+# live in one of these on both machines.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+command -v deepclaude >/dev/null || { echo "deep-run: deepclaude not on PATH" >&2; exit 2; }
+
+# deep is a headless main loop with no Agent tool, so it never produces subagent
+# traffic. Pin the cheap model directly and hand the main loop the same harness the
+# subagent path gets, plus the loop guard (see repo/proxy/model-proxy.js).
+export CHEAPERINFERENCE_MODEL="${CHEAPERINFERENCE_MODEL:-deepseek-v4-flash-0731}"
+# ci 唯一後端（CHEAPERINFERENCE_API_KEY）。OpenRouter key 專屬其他用途（Jev／OpenClaw
+# free），bin/deepclaude 會 unset OPENROUTER_API_KEY，or 後端會 fail loud。
+export OPENROUTER_MODEL="${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}"
+export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
+export DC_MAIN_HARNESS_FILE="${DC_MAIN_HARNESS_FILE:-$DC_HOME/deep-agent/deep-harness.md}"
+export DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}"
+
+# Sandbox guard: the allowlist entry is the literal string "deep-run *", so calling
+# this by absolute path silently drops back into the sandbox (node DNS dies at once
+# and fakes a 502).
+case "${HTTPS_PROXY:-}" in
+    *localhost:*|*127.0.0.1:*)
+        echo "deep-run: running INSIDE sandbox — call bare 'deep-run', not the full path" >&2
+        exit 3 ;;
+esac
+
+f=${1:-}; d=${2:-$DC_HOME/work}
+WLOG="${WLOG:-$HOME/Library/Logs/openclaw/wrappers.log}"
+case "$f" in /*) ;; *) echo "deep-run: task path must be absolute: $f" >&2; exit 2 ;; esac
+[ -f "$f" ] || { echo "deep-run: task file not found: $f" >&2; exit 2; }
+[ -d "$d" ] || { echo "deep-run: cwd not found: $d" >&2; exit 2; }
+
+# GH_TOKEN is resolved inside deep-run-inner (kv file, else `gh auth token`), never
+# here: anything put in the tmux command string below shows up verbatim in `ps`.
+
+mkdir -p "$(dirname "$WLOG")"
+echo "$(date '+%F %T') deep-run start $f cwd=$d" >> "$WLOG"
+
+# R2: snapshot the task file before handing it to deepclaude — hash the copy target,
+# copy it read-only into $DC_HOME/work/.deep so deep/proxy cannot alter the contract
+# the caller (and later the mechanical judge) relies on. deepclaude reads the copy.
+# R8: 秒數加 $$（本進程 PID）尾綴——兩個 deep-run 同一秒並發時，純秒數會撞同名
+# tmux session（duplicate session）與 task 檔（後者靜默覆蓋、wait-for 管道掛死，
+# 2026-09-29 WP-A 21 格漏派兩次）。同秒不同進程 PID 必不同。
+EPOCH="$(date +%s)-$$"
+DEEP_TASK_DIR="$DC_HOME/work/.deep"
+mkdir -p "$DEEP_TASK_DIR"
+orig_hash=$(shasum -a 256 "$f" | cut -d' ' -f1)
+DEEP_TASK_FILE="$DEEP_TASK_DIR/$EPOCH-task.md"
+cp -f "$f" "$DEEP_TASK_FILE"
+chmod 444 "$DEEP_TASK_FILE"
+# R7: mirror the task path by cwd slug so the stop-gate can recover the task file
+# even when the harness strips DEEP_TASK_FILE from the hook env (09-24 失聲). Slug =
+# cwd with / and . both replaced by - (same as deep-run-inner transcript slug).
+mkdir -p "$DEEP_TASK_DIR/by-cwd"
+SLUG=$(printf '%s' "$d" | sed 's/[\/.]/-/g')
+printf '%s' "$f" > "$DEEP_TASK_DIR/by-cwd/$SLUG"
+export DEEP_TASK_FILE
+
+# deep-run is usually reached through the ~/.local/bin/deep-run symlink; resolve it
+# so the inner's real path is used (a half-resolved INNER = ~/.local/bin/deep-run-inner
+# does not exist and the tmux dispatch dies on the spot).
+self=$0
+if [ -L "$self" ]; then
+  link_dir="$(cd "$(dirname "$self")" && pwd)"
+  tgt="$(readlink "$self")"
+  case "$tgt" in /*) real="$tgt" ;; *) real="$link_dir/$tgt" ;; esac
+  self="$real"
+fi
+INNER="$(cd "$(dirname "$self")" && pwd)/deep-run-inner"
+command -v "$INNER" >/dev/null || { echo "deep-run: inner not found: $INNER" >&2; exit 2; }
+
+if [ "${DEEP_NO_TMUX:-0}" = 1 ]; then
+  # Tests / interactive debugging: run straight, inherit this shell's env.
+  "$INNER" "$DEEP_TASK_FILE" "$d" "$f" "$EPOCH"
+else
+  # tmux env does not inherit the caller's exports — hand them over explicitly.
+  envstr="env PATH='$PATH' CHEAPERINFERENCE_MODEL='$CHEAPERINFERENCE_MODEL'"
+  envstr="$envstr DC_MAIN_HARNESS_FILE='$DC_MAIN_HARNESS_FILE' DC_LOOP_GUARD='$DC_LOOP_GUARD'"
+  envstr="$envstr DEEP_TASK_FILE='$DEEP_TASK_FILE' DC_HOME='$DC_HOME' WLOG='$WLOG'"
+  envstr="$envstr CREDS_DIR='$CREDS_DIR'"
+  envstr="$envstr CHEAPCLAUDE_DEFAULT_BACKEND='$CHEAPCLAUDE_DEFAULT_BACKEND' OPENROUTER_MODEL='$OPENROUTER_MODEL'"  # deep-or
+  tmux -L deep new-session -d -s "deep-$EPOCH" \
+    "$envstr '$INNER' '$DEEP_TASK_FILE' '$d' '$f' '$EPOCH' ; tmux -L deep wait-for -S deep-$EPOCH"
+  # Foreground: wait for the inner to signal completion (wait-for is released by the
+  # inner's own `wait-for -S`, which follows the model run to its end).
+  tmux -L deep wait-for "deep-$EPOCH"
+fi
+cat "$DEEP_TASK_DIR/$EPOCH.out"
+exit "$(cat "$DEEP_TASK_DIR/$EPOCH.rc")"
+}
+main "$@"
