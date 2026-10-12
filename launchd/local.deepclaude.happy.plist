@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Machine-independent: every path resolves from $HOME inside sh -c (launchd sets HOME
+     for gui agents but does not expand it in plist keys, so no WorkingDirectory/StandardOutPath).
+     Install: launchctl bootstrap gui/$(id -u) ~/.deepclaude/launchd/local.deepclaude.happy.plist -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.deepclaude.happy</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>cd "$HOME/.deepclaude/work" &amp;&amp; exec &gt;&gt;"$HOME/Library/Logs/deepclaude-happy.log" 2&gt;&amp;1 &amp;&amp; exec /usr/bin/script -q /dev/null "$HOME/.deepclaude/bin/deepclaude" --happy</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+</dict>
+</plist>

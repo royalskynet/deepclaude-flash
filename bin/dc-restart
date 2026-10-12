@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# dc-restart — clean restart of the deepclaude launchd stack (proxy + happy).
+# Orphan risk: launchd only tracks the job's main pid; happy's claude child can
+# outlive a SIGKILL, and a non-happy `deepclaude launch` session leaks one
+# start-proxy.js per session when its shell is killed.
+# This: 1) SIGTERM the happy job's process group, 2) kill leaked session proxies,
+# 3) kickstart the resident proxy (launchd reaps/replaces it cleanly), 4) sweep leftovers.
+# Do NOT run this from inside the happy session it restarts — step 1 kills its own ancestor.
+set -euo pipefail
+
+UID_N="$(id -u)"
+PROXY_LABEL="local.deepclaude.proxy"
+HAPPY_LABEL="local.deepclaude.happy"
+# Resident proxy port — must match bin/deepclaude-proxyd; per-session proxies never pass --port.
+PROXY_PORT="${DC_PROXY_PORT:-20133}"
+
+# pid of a launchd job (empty when loaded-but-not-running or not loaded).
+job_pid() { launchctl print "gui/$UID_N/$1" 2>/dev/null | awk '$1=="pid" && $2=="=" {print $3; exit}'; }
+# pids of start-proxy.js that are NOT the resident one (leaked per-session proxies).
+# Anchored to the node invocation: a bare "start-proxy.js" also matches editors/shells
+# whose command line merely mentions the file, and step 2 would kill them.
+leaked_proxies() {
+    pgrep -f '^node .*/proxy/start-proxy\.js' | while read -r p; do
+        ps -o command= -p "$p" | grep -qv -- "--port $PROXY_PORT" && echo "$p"
+    done || true
+}
+
+# refuse when the caller is inside the tree we are about to TERM (the header warning was prose only)
+caller_inside_tree() {   # $1 = root pid; walks $$'s ancestors; fail-closed if ps is unavailable
+    local p=$$ pp
+    while [[ -n "$p" && "$p" != 1 ]]; do
+        [[ "$p" == "$1" ]] && return 0
+        pp="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')" || return 2
+        [[ -z "$pp" ]] && return 2
+        p="$pp"
+    done
+    return 1
+}
+
+# 1. Gracefully stop the happy tree. launchd services are session leaders, so the
+#    job's pgid covers script -> happy -> node -> claude without matching on install paths
+#    (homebrew or nvm installs) and without touching other happy sessions.
+HAPPY_PGID=""
+HAPPY_PID="$(job_pid "$HAPPY_LABEL")"
+if [[ -n "$HAPPY_PID" ]]; then
+    HAPPY_PGID="$(ps -o pgid= -p "$HAPPY_PID" | tr -d ' ')"
+    caller_status=0
+    caller_inside_tree "$HAPPY_PID" || caller_status=$?
+    if [[ "$caller_status" == 0 ]]; then
+        echo "  REFUSING: caller (pid $$, pgid $(ps -o pgid= -p "$$" | tr -d ' ')) is inside the happy tree" \
+             "(pid $HAPPY_PID, pgid ${HAPPY_PGID:-?}) it is about to TERM." \
+             "Run dc-restart from a launchd oneshot or another session instead." >&2
+        exit 2
+    elif [[ "$caller_status" == 2 ]]; then
+        echo "  REFUSING: cannot read process lineage (caller pid $$, pgid $(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ' || echo '?')) — not safe to kill" >&2
+        exit 2
+    fi
+    echo "  stopping $HAPPY_LABEL (pid $HAPPY_PID, pgid ${HAPPY_PGID:-?}, SIGTERM)..."
+    launchctl kill SIGTERM "gui/$UID_N/$HAPPY_LABEL" 2>/dev/null || true
+    # give the tree a moment to unwind, then TERM whatever is left in the job's group
+    sleep 2
+    if [[ -n "$HAPPY_PGID" ]]; then kill -TERM -- "-$HAPPY_PGID" 2>/dev/null || true; fi
+    sleep 1
+fi
+
+# 2. Kill leaked per-session proxies. The resident one is handled by launchd in step 3.
+LEAKED="$(leaked_proxies)"
+if [[ -n "$LEAKED" ]]; then
+    echo "  killing leaked session proxies: $LEAKED"
+    # shellcheck disable=SC2086  # newline-separated pids, splitting intended
+    kill $LEAKED 2>/dev/null || true
+    sleep 1
+fi
+
+# 3. Restart the resident proxy via launchd (it reaps the old, starts a new one).
+echo "  restarting $PROXY_LABEL..."
+launchctl kickstart -k "gui/$UID_N/$PROXY_LABEL"
+
+# 3b. Relaunch happy (KeepAlive=false, so launchd won't bring it back on its own).
+if launchctl print "gui/$UID_N/$HAPPY_LABEL" >/dev/null 2>&1; then
+    echo "  relaunching $HAPPY_LABEL..."
+    launchctl kickstart -k "gui/$UID_N/$HAPPY_LABEL"
+else
+    echo "  $HAPPY_LABEL not loaded — bootstrap it:"
+    echo "    launchctl bootstrap gui/$UID_N ~/.deepclaude/launchd/local.deepclaude.happy.plist"
+fi
+
+# 4. Sweep: report anything that should be gone but survived.
+sleep 2
+echo "  --- residual check ---"
+LEFTOVER="$(leaked_proxies)"
+if [[ -n "$LEFTOVER" ]]; then
+    echo "  WARN: still-running leaked proxies: $LEFTOVER (killing -9)"
+    # shellcheck disable=SC2086
+    kill -9 $LEFTOVER 2>/dev/null || true
+else
+    echo "  no leaked session proxies"
+fi
+if [[ -n "$HAPPY_PGID" ]] && pgrep -g "$HAPPY_PGID" >/dev/null 2>&1; then
+    echo "  WARN: old happy tree (pgid $HAPPY_PGID) still has live processes"
+else
+    echo "  old happy tree stopped"
+fi
+
+echo "  --- final state ---"
+for l in "$PROXY_LABEL" "$HAPPY_LABEL"; do
+    pid="$(job_pid "$l")"
+    if [[ -n "$pid" ]]; then echo "  $l: running pid $pid"; else echo "  $l: not running"; fi
+done

@@ -1,0 +1,6 @@
+work/
+config/
+cache/
+backups/
+*.log
+node_modules/

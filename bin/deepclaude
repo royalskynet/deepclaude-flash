@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# deepclaude launcher.
+# Own CLAUDE_CONFIG_DIR (sessions/history/state separate from ~/.claude). No sync
+# from ~/.claude at all: config/settings.json + config/CLAUDE.md are versioned here.
+# Per-machine overrides use Claude Code's own project-local layer,
+# work/.claude/settings.local.json (deep-merged on top, never committed) — seeded once
+# from config/settings.local.$(id -un).json if that file exists.
+set -euo pipefail
+
+DC_HOME="${DC_HOME:-$HOME/.deepclaude}"
+# launchd gives a minimal PATH; happy, claude and node live here.
+export PATH="/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+# happy/node may also live under nvm (not covered above).
+_nvm_sh="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+_nvm_bin=""
+if [[ -s "$_nvm_sh" ]]; then
+    # official resolver: nvm handles lts/*, node and bare majors; --no-use leaves this shell's PATH alone
+    _nvm_node="$(bash -c '. "$1" --no-use >/dev/null 2>&1 && nvm which default 2>/dev/null' _ "$_nvm_sh" || true)"
+    [[ -n "$_nvm_node" ]] && _nvm_bin="$(dirname "$_nvm_node")"
+fi
+# no default alias / no nvm: newest installed still wins; no-op without nvm
+[[ -z "$_nvm_bin" ]] && _nvm_bin=$(ls -d "$HOME/.nvm/versions/node/"*/bin 2>/dev/null | sort -V | tail -1 || true)
+[[ -n "$_nvm_bin" ]] && PATH="$_nvm_bin:$PATH"
+export PATH
+CFG="${DC_CONFIG_DIR:-$DC_HOME/config}"
+
+mkdir -p "$CFG" "$DC_HOME/work"
+# cwd=$HOME would make ~/.claude/settings.json load as project settings on top of
+# CLAUDE_CONFIG_DIR, leaking the main machine's hooks/plugins into the first turn.
+[[ "$PWD" == "$HOME" ]] && cd "$DC_HOME/work"
+
+. "$DC_HOME/bin/lib-creds.sh"
+load_cred CHEAPERINFERENCE_API_KEY cheaperinference
+# OpenRouter keys are reserved for other consumers (other local tools);
+# deep runs on ci. Drop any inherited copy so `-b or` fails loud instead of
+# borrowing one.
+unset OPENROUTER_API_KEY
+load_cred OMNIROUTE_DEEPCLAUDE_KEY omniroute
+# Optional search-tool keys, passed through if present.
+load_cred BRAVE_SEARCH_API_KEY brave
+load_cred FIRECRAWL_API_KEY firecrawl
+
+loc="$DC_HOME/work/.claude/settings.local.json"; seed="$DC_HOME/config/settings.local.$(id -un).json"
+[[ -f "$loc" || ! -f "$seed" ]] || { mkdir -p "${loc%/*}" && cp "$seed" "$loc"; }
+
+export CLAUDE_CONFIG_DIR="$CFG"
+# Default backend: ci = CheaperInference. Main loop and subagents both
+# deepseek-v4-flash-0731 (Flash only, Pro is refused) (see repo/deepclaude.sh). Override: `deepclaude -b omni` or env.
+export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
+
+unset ANTHROPIC_API_KEY
+exec "$DC_HOME/repo/deepclaude.sh" "$@"

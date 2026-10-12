@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# dc-stats [session.jsonl] — round trips / output tokens / tool batching for a deepclaude session.
+# No args: newest session under the deepclaude config.
+set -euo pipefail
+f="${1:-}"
+[[ -z "$f" ]] && f=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.deepclaude/config}/projects" -name '*.jsonl' \
+                    -not -path '*/subagents/*' -not -path '*observer-sessions*' -print0 \
+                    | xargs -0 ls -t 2>/dev/null | head -1)
+[[ -f "$f" ]] || { echo "no session file"; exit 1; }
+python3 - "$f" <<'PY'
+import json,sys,collections
+msgs=collections.OrderedDict()
+for line in open(sys.argv[1],encoding='utf-8',errors='replace'):
+    try: r=json.loads(line)
+    except Exception: continue
+    m=r.get('message') or {}
+    if r.get('type')!='assistant' or not m.get('id'): continue
+    e=msgs.setdefault(m['id'],{'out':0,'tools':0,'ts':r.get('timestamp')})
+    u=m.get('usage') or {}
+    if u.get('output_tokens'): e['out']=u['output_tokens']          # same per block, not summed
+    for c in (m.get('content') or []):
+        if isinstance(c,dict) and c.get('type')=='tool_use': e['tools']+=1
+n=len(msgs)
+if not n: sys.exit(print("no assistant turns"))
+out=sum(v['out'] for v in msgs.values())
+tool_turns=[v['tools'] for v in msgs.values() if v['tools']]
+solo=sum(1 for t in tool_turns if t==1)
+ts=[v['ts'] for v in msgs.values() if v['ts']]
+span=""
+if len(ts)>1:
+    from datetime import datetime
+    p=lambda s: datetime.fromisoformat(s.replace('Z','+00:00'))
+    secs=(p(ts[-1])-p(ts[0])).total_seconds()
+    span=f"  wall {secs/60:.0f} min   {out/secs:.1f} tok/s   {secs/n:.0f} s/round"
+print(f"{sys.argv[1].split('/')[-1][:8]}  rounds {n}   output {out:,} tok{span}")
+print(f"  tool rounds {len(tool_turns)}   solo {solo} ({100*solo/max(len(tool_turns),1):.0f}%)   "
+      f"avg {sum(tool_turns)/max(len(tool_turns),1):.2f}   max {(max(tool_turns) if tool_turns else 0)}")
+PY
