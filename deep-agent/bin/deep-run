@@ -36,7 +36,7 @@ export CHEAPERINFERENCE_MODEL="${CHEAPERINFERENCE_MODEL:-deepseek-v4-flash-0731}
 # ci 唯一後端（CHEAPERINFERENCE_API_KEY）。OpenRouter key 專屬其他用途（Jev／OpenClaw
 # free），bin/deepclaude 會 unset OPENROUTER_API_KEY，or 後端會 fail loud。
 export OPENROUTER_MODEL="${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}"
-export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
+export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-go}"
 export DC_MAIN_HARNESS_FILE="${DC_MAIN_HARNESS_FILE:-$DC_HOME/deep-agent/deep-harness.md}"
 export DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}"
 

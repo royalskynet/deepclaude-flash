@@ -11,6 +11,8 @@ import { loadRegistry } from './model-registry.js';
 // until then (and if the catalog is unreachable), which the clamp treats as
 // "no known cap" rather than inventing a conservative one — see model-registry.js.
 let REGISTRY = null;
+// Fallback x-opencode-session when the client sends no session id of its own.
+const PROXY_SESSION_ID = `deepclaude-${process.pid}-${Date.now()}`;
 
 // ponytail: every log line gets an ISO stamp so proxy.log can be correlated with
 // transcript timestamps (a silent client retry shows up as two upstream requests
@@ -605,6 +607,11 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     headers['authorization'] = `Bearer ${state.apiKey}`;
                 } else {
                     headers['x-api-key'] = state.apiKey;
+                }
+                // OpenCode Go rejects requests without a stable per-conversation id
+                // (400 MissingSessionID); Claude Code's own session id is exactly that.
+                if (dest.hostname === 'opencode.ai' && !headers['x-opencode-session']) {
+                    headers['x-opencode-session'] = headers['x-claude-code-session-id'] || PROXY_SESSION_ID;
                 }
             }
 

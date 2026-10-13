@@ -1,0 +1,10 @@
+{
+  "deepseek-v4-flash": {
+    "max_output_tokens": 384000,
+    "max_input_tokens": 1000000,
+    "supports_reasoning": true,
+    "input_per_m": 0.15,
+    "output_per_m": 0.6,
+    "cache_read_per_m": 0.003
+  }
+}

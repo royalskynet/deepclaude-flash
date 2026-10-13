@@ -40,6 +40,10 @@ CI_SUBAGENT_MODEL="${CHEAPERINFERENCE_SUBAGENT_MODEL:-deepseek-v4-flash-0731}"
 # the main model's CLAUDE_CODE_MAX_OUTPUT_TOKENS never overflows Flash's 65536 cap.
 CI_SUBAGENT_MAX_OUTPUT="${CHEAPERINFERENCE_SUBAGENT_MAX_OUTPUT:-65536}"
 OMNIROUTE_DEFAULT_URL="http://127.0.0.1:20128"
+# OpenCode Go subscription: Anthropic /v1/messages under /zen/go; the proxy adds the
+# x-opencode-session header Go requires (400 MissingSessionID without it).
+OPENCODE_GO_URL="https://opencode.ai/zen/go"
+GO_MODEL="${OPENCODE_GO_MODEL:-deepseek-v4-flash}"
 OMNI_MODEL="${OMNIROUTE_MODEL:-free-tools}"
 
 BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
@@ -108,6 +112,13 @@ resolve_backend() {
             haiku="$CI_SUBAGENT_MODEL"; subagent="$CI_SUBAGENT_MODEL"
             sub_max_out="$CI_SUBAGENT_MAX_OUTPUT"
             ;;
+        go|opencode-go)
+            key="${OPENCODE_ZEN_API_KEY:-}"
+            [[ -z "$key" ]] && { echo "ERROR: OPENCODE_ZEN_API_KEY not set" >&2; exit 1; }
+            url="$OPENCODE_GO_URL"
+            opus="$GO_MODEL"; sonnet="$GO_MODEL"
+            haiku="$GO_MODEL"; subagent="$GO_MODEL"
+            ;;
         omni|omniroute)
             key="${OMNIROUTE_DEEPCLAUDE_KEY:-}"
             [[ -z "$key" ]] && { echo "ERROR: OMNIROUTE_DEEPCLAUDE_KEY not set" >&2; exit 1; }
@@ -116,7 +127,7 @@ resolve_backend() {
             haiku="$OMNI_MODEL"; subagent="$OMNI_MODEL"
             ;;
         anthropic) ;;
-        *) echo "ERROR: Unknown backend '$BACKEND'. Use: ci, omni, ds, or, fw, anthropic" >&2; exit 1 ;;
+        *) echo "ERROR: Unknown backend '$BACKEND'. Use: go, ci, omni, ds, or, fw, anthropic" >&2; exit 1 ;;
     esac
     # Flash-only policy: refuse any DeepSeek Pro id, including env overrides.
     local m
@@ -188,11 +199,13 @@ show_status() {
     echo "    FIREWORKS_API_KEY:   $(mask_key "${FIREWORKS_API_KEY:-}")"
     echo "    CHEAPERINFERENCE_API_KEY: $(mask_key "${CHEAPERINFERENCE_API_KEY:-}")"
     echo "    OMNIROUTE_DEEPCLAUDE_KEY: $(mask_key "${OMNIROUTE_DEEPCLAUDE_KEY:-}")"
+    echo "    OPENCODE_ZEN_API_KEY:     $(mask_key "${OPENCODE_ZEN_API_KEY:-}")"
     echo "    CLAUDE_CONFIG_DIR:   ${CLAUDE_CONFIG_DIR:-<default ~/.claude>}"
     echo ""
     echo "  Backends:"
     echo "    deepclaude                  # CheaperInference (default): DeepSeek V4 Flash, main + subagents"
     echo "    deepclaude -b omni          # OmniRoute free combo (via resident proxy)"
+    echo "    deepclaude -b go            # OpenCode Go subscription: DeepSeek V4 Flash"
     echo "    deepclaude -b or            # OpenRouter (cheapest)"
     echo "    deepclaude -b fw            # Fireworks AI (fastest)"
     echo "    deepclaude -b anthropic     # Normal Claude Code"
@@ -253,7 +266,7 @@ show_help() {
     echo "Usage: deepclaude [options] [-- claude-args...]"
     echo ""
     echo "Options:"
-    echo "  -b, --backend <ci|omni|ds|or|fw|anthropic>  Backend (default: ci)"
+    echo "  -b, --backend <go|ci|omni|ds|or|fw|anthropic>  Backend (default: $CHEAPCLAUDE_DEFAULT_BACKEND)"
     echo "  -r, --remote                        Remote control mode (browser URL)"
     echo "  --happy                              Launch happy against the resident proxy"
     echo "  --status                             Show keys and backends"

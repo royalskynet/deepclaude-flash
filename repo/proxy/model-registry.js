@@ -71,7 +71,7 @@ export async function loadRegistry(baseUrl, apiKey) {
 
     let entries;
     try {
-        const url = new URL('/v1/models', baseUrl);
+        const url = new URL(baseUrl.replace(/\/+$/, '') + '/v1/models');
         const res = await fetch(url, {
             headers: { Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
             signal: AbortSignal.timeout(10_000),

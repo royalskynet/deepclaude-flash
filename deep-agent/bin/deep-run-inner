@@ -54,6 +54,10 @@ RC="$DC_HOME/work/.deep/$EPOCH.rc"
     --permission-mode bypassPermissions \
     --max-turns 150
   rc=$?
+  # The by-cwd mirror is only valid for this run; left behind, it makes the stop-gate
+  # judge every later deepclaude session in this cwd against this old task.
+  M="$DC_HOME/work/.deep/by-cwd/$(printf '%s' "$d" | sed 's/[\/.]/-/g')"
+  [ "$(cat "$M" 2>/dev/null)" = "$f" ] && rm -f "$M"
   # R2: the caller's task file must not drift from the copy deepclaude was given.
   new_hash=$(shasum -a 256 "$f" 2>/dev/null | cut -d' ' -f1)
   copy_hash=$(shasum -a 256 "$copy" 2>/dev/null | cut -d' ' -f1)
