@@ -42,35 +42,27 @@ load_cred FIRECRAWL_API_KEY firecrawl
 
 # Git hooks live in-repo (repo/tools/hooks) so both machines share one file, but
 # core.hooksPath is per-clone config — set it once, here, so a fresh clone gets the
-# deep-agent mirror sync on push without a separate install step.
-# A hooksPath inherited from global config (e.g. a managed pre-push dispatcher) must not
-# be overridden — that would silently bypass it. Such dispatchers chain
-# .git/hooks/pre-push, so link ours there instead.
+# pre-commit/post-commit hooks without a separate install step.
+# A hooksPath inherited from global config must not be overridden — that would silently
+# bypass it.
 if [[ -d "$DC_HOME/.git" ]]; then
     _hp="$(git -C "$DC_HOME" config --get core.hooksPath 2>/dev/null || true)"
-    if [[ -z "$_hp" ]]; then
-        git -C "$DC_HOME" config core.hooksPath repo/tools/hooks || true
-    elif [[ "$_hp" != repo/tools/hooks && ! -e "$DC_HOME/.git/hooks/pre-push" ]]; then
-        ln -s ../../repo/tools/hooks/pre-push "$DC_HOME/.git/hooks/pre-push" 2>/dev/null || true
-    fi
+    [[ -n "$_hp" ]] || git -C "$DC_HOME" config core.hooksPath repo/tools/hooks || true
 fi
 
-# deep-agent ships inside this repo, but its skill/command/deep-run belong to the MAIN
-# ~/.claude (that is where the dispatching session reads them), so a fresh clone still
-# needs install.sh. Same idea as core.hooksPath above: do it here, not by memory.
-# install.sh is idempotent, but it also backs up a real ~/.claude/skills/deep directory,
-# so only run it when a link is actually missing or stale. A failure warns and lets the
-# launcher through — no deep dispatch is not a reason to refuse to start.
-if [[ -x "$DC_HOME/deep-agent/install.sh" ]]; then
-    _da_ok=1
-    for _l in "$HOME/.claude/skills/deep:$DC_HOME/deep-agent/claude/skills/deep" \
-              "$HOME/.claude/commands/deep.md:$DC_HOME/deep-agent/claude/commands/deep.md" \
-              "$HOME/.local/bin/deep-run:$DC_HOME/deep-agent/bin/deep-run"; do
-        [[ "$(readlink "${_l%%:*}" 2>/dev/null)" == "${_l#*:}" ]] || { _da_ok=0; break; }
-    done
-    (( _da_ok )) || "$DC_HOME/deep-agent/install.sh" >/dev/null 2>&1 \
-        || echo "deepclaude: deep-agent install.sh failed; run $DC_HOME/deep-agent/install.sh by hand" >&2
-fi
+# 派deep: the dispatching session is the MAIN ~/.claude, so the deep skill and the bare
+# `deep-run`/`deep-lint` names it calls are linked there from this repo. Only a missing
+# path or a stale symlink is (re)linked; a regular file in the way is a deliberate local
+# stub (deep dispatch switched off on this machine) and is left alone.
+for _l in "$HOME/.claude/skills/deep:$DC_HOME/skills/deep" \
+          "$HOME/.local/bin/deep-run:$DC_HOME/bin/deep-run" \
+          "$HOME/.local/bin/deep-lint:$DC_HOME/bin/deep-lint"; do
+    _p="${_l%%:*}"; _t="${_l#*:}"
+    if [[ ! -e "$_p" && ! -L "$_p" ]] || [[ -L "$_p" && "$(readlink "$_p")" != "$_t" ]]; then
+        mkdir -p "$(dirname "$_p")" && ln -sfn "$_t" "$_p" \
+            || echo "deepclaude: could not link $_p -> $_t" >&2
+    fi
+done
 
 loc="$DC_HOME/work/.claude/settings.local.json"; seed="$DC_HOME/config/settings.local.$(id -un).json"
 [[ -f "$loc" || ! -f "$seed" ]] || { mkdir -p "${loc%/*}" && cp "$seed" "$loc"; }

@@ -3,7 +3,7 @@
 # model: builds a fake DC_HOME, a task whose 驗收 must fail, mirrors it in by-cwd, then
 # feeds the hook a Stop payload WITHOUT DEEP_TASK_FILE in env. Expect: a block decision
 # when the cwd matches, and a skip:no-task-file log line when it does not.
-# Run: deep-agent/bin/test-deep-stop-gate.sh
+# Run: bin/test-deep-stop-gate.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

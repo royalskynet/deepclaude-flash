@@ -47,7 +47,7 @@ Every backend defaults to a DeepSeek Flash model, and the launcher, the resident
 | `repo/deepclaude.sh` | Backend router (ci / ds / or / fw / omni / anthropic), spawns a per-session proxy. 後端路由 |
 | `repo/proxy/` | Anthropic API ⇄ backend translating proxy, with tests (`node repo/proxy/test-*.mjs`). 轉譯 proxy |
 | `bin/deepclaude-proxyd`, `launchd/` | Optional resident proxy for `happy` phone sessions (macOS launchd). 選用：常駐 proxy |
-| `deep-agent/` | `deep` skill + `deep-run`: hand a task with one acceptance command to a headless deepclaude runner (`deep-agent/install.sh` links it into `~/.claude`). 派工技能 |
+| `bin/deep-run`, `bin/deep-lint`, `bin/wo-verify`, `hooks/`, `skills/deep/`, `config/deep-*.md` | Built-in `deep` dispatch: hand a task with one acceptance command to a headless deepclaude runner; `wo-verify` decides pass/fail, the stop gate blocks exit until it passes. Link `skills/deep` into `~/.claude/skills/` and `bin/deep-run` onto `PATH`. 內建派工（派deep） |
 | `bin/dc-stats`, `bin/dc-restart` | Usage readout; clean restart of the launchd stack. 用量統計、重啟 |
 
 ## License / 授權

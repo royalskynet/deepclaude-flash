@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Self-check for how deep-run composes the Claude Code invocation. No network: a stub
 # `deepclaude` earlier on PATH records argv and environment instead of running one.
-# Run: deep-agent/bin/test-deep-run.sh
+# Run: bin/test-deep-run.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,6 +1,6 @@
 ---
 name: deep
-description: 派工給 deep 執行人（deepclaude/CheaperInference，沙箱外、可寫任何路徑）：主 session 給計畫或一句任務＋一條驗收，deep 自主查 fixindex、gh 找輪子、做完驗證回報。說「派工 deep」「派 deep」「deep 去查」「/deep」時用。
+description: 派工給 deep 執行人（deepclaude/CheaperInference，沙箱外、可寫任何路徑）：主 session 給計畫或一句任務＋一條驗收，deep 自主查 fixindex、gh 找輪子、做完驗證回報。只在說「派deep」「派 deep」「deep 去查」時用；一般「派工」走派dr（dispatch-router），不是這裡。
 ---
 # deep = 自主執行者，主 session = 出題＋驗收
 

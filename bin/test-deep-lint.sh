@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Self-check for deep-lint's prose-prohibition warning. No network, no model: two
 # fixture task files, one with a 禁令 left in the body and one with it moved into the
-# 「## 禁止」 section. Run: deep-agent/bin/test-deep-lint.sh
+# 「## 禁止」 section. Run: bin/test-deep-lint.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
