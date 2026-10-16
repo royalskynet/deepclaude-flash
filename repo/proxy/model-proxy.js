@@ -9,10 +9,8 @@ import { loadRegistry } from './model-registry.js';
 
 // Per-model caps, filled in from the provider catalog once the proxy is up. Null
 // until then (and if the catalog is unreachable), which the clamp treats as
-// "no known cap" rather than inventing a conservative one — see model-registry.js.
+// "no known cap" rather than inventing a conservative one — see fixindex 9500.
 let REGISTRY = null;
-// Fallback x-opencode-session when the client sends no session id of its own.
-const PROXY_SESSION_ID = `deepclaude-${process.pid}-${Date.now()}`;
 
 // ponytail: every log line gets an ISO stamp so proxy.log can be correlated with
 // transcript timestamps (a silent client retry shows up as two upstream requests
@@ -608,11 +606,6 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 } else {
                     headers['x-api-key'] = state.apiKey;
                 }
-                // OpenCode Go rejects requests without a stable per-conversation id
-                // (400 MissingSessionID); Claude Code's own session id is exactly that.
-                if (dest.hostname === 'opencode.ai' && !headers['x-opencode-session']) {
-                    headers['x-opencode-session'] = headers['x-claude-code-session-id'] || PROXY_SESSION_ID;
-                }
             }
 
             const chunks = [];
@@ -701,7 +694,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             // and the budget policy for subagents (env). Take the lower
                             // of whichever are known. A model absent from the catalog
                             // contributes no cap rather than a guessed one — guessing is
-                            // what silently truncated output in a past bug.
+                            // what silently truncated output in fixindex 9500.
                             const caps = [
                                 REGISTRY?.lookup(parsed.model)?.max_output_tokens,
                                 isSubagent ? DC_SUBAGENT_MAX_OUTPUT : 0,
@@ -763,7 +756,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
 
                 // Debug affordance: DC_DUMP_DIR=<dir> dumps every outbound /v1/messages
                 // body + headers, so consecutive turns can be diffed to find where the
-                // cached prefix diverges. Unset in normal runs; auth
+                // cached prefix diverges (fixindex 0976). Unset in normal runs; auth
                 // headers are redacted, so no credential value ever reaches the dump.
                 if (process.env.DC_DUMP_DIR && isModelCall) {
                     try {

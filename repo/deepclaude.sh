@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deepclaude — Use Claude Code with DeepSeek Flash or other cheap backends
+# deepclaude — Use Claude Code with GLM-5.3 Flash or other cheap backends
 # Usage: deepclaude [--backend ds|or|fw|anthropic] [--remote] [--status] [--cost] [--benchmark]
 
 set -euo pipefail
@@ -17,7 +17,7 @@ CHEAPERINFERENCE_DEFAULT_URL="https://api.cheaperinference.com"
 # pick below came from one small task; in long agent loops v4.1-flash emits
 # ~3.5x more thinking per call than pro-0813 (4.6k vs 1.3k chars, same prompt,
 # thinking:disabled ignored by CI's Anthropic endpoint) and real sessions
-# stalled 82-165s/call.
+# stalled 82-165s/call. See research-reports deepclaude主模型選擇報告-20260924.md.
 # Earlier A/B (kept for history):
 # tools/ab-model.sh, 3 trials each on one fixed task, 2026-09-24:
 #   glm-5.3-flash       wall 45-53s  median TTFB 17.1s  $0.0071-0.0141
@@ -29,7 +29,7 @@ CHEAPERINFERENCE_DEFAULT_URL="https://api.cheaperinference.com"
 # Note the earlier prediction that v4.1 would be ~2.7x CHEAPER was wrong: that
 # came from its 8x cheaper cache-read rate, but it earns far fewer cache hits,
 # so the cheaper rate never gets applied. Prices move hourly; re-run the A/B
-# rather than trusting these numbers.
+# rather than trusting these numbers (fixindex 9501).
 # 2026-10-12: owner policy — DeepSeek Flash only, never Pro (guard in resolve_backend).
 CI_MODEL="${CHEAPERINFERENCE_MODEL:-deepseek-v4-flash-0731}"
 # Subagents stay on DeepSeek V4 Flash: still 1.6x cheaper input / 2.7x cheaper
@@ -40,10 +40,6 @@ CI_SUBAGENT_MODEL="${CHEAPERINFERENCE_SUBAGENT_MODEL:-deepseek-v4-flash-0731}"
 # the main model's CLAUDE_CODE_MAX_OUTPUT_TOKENS never overflows Flash's 65536 cap.
 CI_SUBAGENT_MAX_OUTPUT="${CHEAPERINFERENCE_SUBAGENT_MAX_OUTPUT:-65536}"
 OMNIROUTE_DEFAULT_URL="http://127.0.0.1:20128"
-# OpenCode Go subscription: Anthropic /v1/messages under /zen/go; the proxy adds the
-# x-opencode-session header Go requires (400 MissingSessionID without it).
-OPENCODE_GO_URL="https://opencode.ai/zen/go"
-GO_MODEL="${OPENCODE_GO_MODEL:-deepseek-v4-flash}"
 OMNI_MODEL="${OMNIROUTE_MODEL:-free-tools}"
 
 BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
@@ -112,13 +108,6 @@ resolve_backend() {
             haiku="$CI_SUBAGENT_MODEL"; subagent="$CI_SUBAGENT_MODEL"
             sub_max_out="$CI_SUBAGENT_MAX_OUTPUT"
             ;;
-        go|opencode-go)
-            key="${OPENCODE_ZEN_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: OPENCODE_ZEN_API_KEY not set" >&2; exit 1; }
-            url="$OPENCODE_GO_URL"
-            opus="$GO_MODEL"; sonnet="$GO_MODEL"
-            haiku="$GO_MODEL"; subagent="$GO_MODEL"
-            ;;
         omni|omniroute)
             key="${OMNIROUTE_DEEPCLAUDE_KEY:-}"
             [[ -z "$key" ]] && { echo "ERROR: OMNIROUTE_DEEPCLAUDE_KEY not set" >&2; exit 1; }
@@ -127,7 +116,7 @@ resolve_backend() {
             haiku="$OMNI_MODEL"; subagent="$OMNI_MODEL"
             ;;
         anthropic) ;;
-        *) echo "ERROR: Unknown backend '$BACKEND'. Use: go, ci, omni, ds, or, fw, anthropic" >&2; exit 1 ;;
+        *) echo "ERROR: Unknown backend '$BACKEND'. Use: ci, omni, ds, or, fw, anthropic" >&2; exit 1 ;;
     esac
     # Flash-only policy: refuse any DeepSeek Pro id, including env overrides.
     local m
@@ -157,7 +146,7 @@ set_model_env() {
     export CLAUDE_CODE_SUBAGENT_MODEL="$RESOLVED_SUBAGENT"
     # Per-model caps come from the provider catalog (proxy/model-registry.js →
     # GET /v1/models), never from a case statement here. A hardcoded table is how
-    # a past bug happened: a new model id fell through the catch-all and had
+    # fixindex 9500 happened: a new model id fell through the catch-all and had
     # its 131,072 output cap silently clamped to 16,384. Unknown id now fails loud.
     # Single source of truth: do NOT also pin CLAUDE_CODE_MAX_OUTPUT_TOKENS in settings.json.
     if [[ "$BACKEND" != "anthropic" && -n "$RESOLVED_OPUS" ]]; then
@@ -177,7 +166,7 @@ set_model_env() {
         # input, so compact earlier instead of filling the window.
         export CLAUDE_CODE_MAX_CONTEXT_TOKENS=$(( ${DC_MAX_INPUT:-1000000} * 40 / 100 ))
         # Exported for --cost, which prices a session off live catalog rates instead of
-        # the net prices that used to be pinned in source and rot.
+        # the net prices that used to be pinned in source and rot (fixindex 9501).
         export DC_IN_PER_M DC_OUT_PER_M DC_CACHE_READ_PER_M DC_SUPPORTS_REASONING
     fi
     export CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1
@@ -199,13 +188,11 @@ show_status() {
     echo "    FIREWORKS_API_KEY:   $(mask_key "${FIREWORKS_API_KEY:-}")"
     echo "    CHEAPERINFERENCE_API_KEY: $(mask_key "${CHEAPERINFERENCE_API_KEY:-}")"
     echo "    OMNIROUTE_DEEPCLAUDE_KEY: $(mask_key "${OMNIROUTE_DEEPCLAUDE_KEY:-}")"
-    echo "    OPENCODE_ZEN_API_KEY:     $(mask_key "${OPENCODE_ZEN_API_KEY:-}")"
     echo "    CLAUDE_CONFIG_DIR:   ${CLAUDE_CONFIG_DIR:-<default ~/.claude>}"
     echo ""
     echo "  Backends:"
     echo "    deepclaude                  # CheaperInference (default): DeepSeek V4 Flash, main + subagents"
     echo "    deepclaude -b omni          # OmniRoute free combo (via resident proxy)"
-    echo "    deepclaude -b go            # OpenCode Go subscription: DeepSeek V4 Flash"
     echo "    deepclaude -b or            # OpenRouter (cheapest)"
     echo "    deepclaude -b fw            # Fireworks AI (fastest)"
     echo "    deepclaude -b anthropic     # Normal Claude Code"
@@ -229,7 +216,7 @@ show_cost() {
     # Prices come from the provider catalog at call time. They used to be pinned
     # here and went stale within the hour: the reseller stamps every price with an
     # expiresAt about ten minutes out, and the list price itself oscillates
-    # (v4-pro went 0.660 -> 1.320 -> 0.660 in one day).
+    # (fixindex 9501 -- v4-pro went 0.660 -> 1.320 -> 0.660 in one day).
     echo ""
     echo "  Pricing -- USD per million tokens, read live from GET /v1/models"
     echo "  ================================================================"
@@ -266,7 +253,7 @@ show_help() {
     echo "Usage: deepclaude [options] [-- claude-args...]"
     echo ""
     echo "Options:"
-    echo "  -b, --backend <go|ci|omni|ds|or|fw|anthropic>  Backend (default: $CHEAPCLAUDE_DEFAULT_BACKEND)"
+    echo "  -b, --backend <ci|omni|ds|or|fw|anthropic>  Backend (default: ci)"
     echo "  -r, --remote                        Remote control mode (browser URL)"
     echo "  --happy                              Launch happy against the resident proxy"
     echo "  --status                             Show keys and backends"
@@ -313,7 +300,7 @@ run_benchmark() {
         if [[ -z "$key" ]]; then echo "  $name: SKIP (no key)"; continue; fi
         local start_ms=$(date +%s%3N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))')
         local status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url/v1/messages" \
-            -H "x-api-key: $key" -H "content-type: application/json" -H "anthropic-version: 2023-06-01" \
+            -H @<(printf 'x-api-key: %s\n' "$key") -H "content-type: application/json" -H "anthropic-version: 2023-06-01" \
             -d "{\"model\":\"$model\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"Reply: ok\"}]}" \
             --max-time 30 2>/dev/null || echo "timeout")
         local end_ms=$(date +%s%3N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))')

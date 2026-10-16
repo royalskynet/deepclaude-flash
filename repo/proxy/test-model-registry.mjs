@@ -28,7 +28,7 @@ assert.strictEqual(or['z-ai/glm-5.3'].input_per_m, 0.6);
 assert.strictEqual(or['z-ai/glm-5.3'].supports_reasoning, true);
 
 // A backend that reports no caps must yield null, never a guessed number —
-// the clamp treats null as "no cap" and a guess as truth.
+// the clamp treats null as "no cap" and a guess as truth (fixindex 9500).
 const bare = normalize({ data: [{ id: 'mystery-1' }] });
 assert.strictEqual(bare['mystery-1'].max_output_tokens, null);
 assert.strictEqual(bare['mystery-1'].supports_reasoning, null);

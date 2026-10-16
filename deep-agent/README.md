@@ -1,7 +1,7 @@
 # deep-agent
 
-> Part of [deepclaude-flash](https://github.com/royalskynet/deepclaude-flash); install that repo first.
-> 屬於 [deepclaude-flash](https://github.com/royalskynet/deepclaude-flash)，請先安裝它。
+> Source of truth: top-level `deep-agent/` in [royalskynet/deepclaude](https://github.com/royalskynet/deepclaude).
+> royalskynet/deep-agent is a public mirror published by `repo/tools/sync-deep-agent-mirror.sh`.
 
 The `deep` agent — the default subagent that runs a task
 end-to-end, headless, outside the sandbox, via deepclaude.
@@ -14,7 +14,7 @@ Entry points:
 - **`/deep`**: slash command that forwards the task via Bash direct `deep-run`.
 - **Bash direct**: `deep-run <task.md> [cwd]`.
 
-Dependencies: [royalskynet/deepclaude-flash](https://github.com/royalskynet/deepclaude-flash),
+Dependencies: [royalskynet/deepclaude](https://github.com/royalskynet/deepclaude),
 and `gh` access (`GH_TOKEN` from `~/.creds/kv`, else `gh auth token`).
 
 ---
@@ -227,6 +227,14 @@ Self-checks (stdlib only, no network):
   is stated, no `--bare`, no `Agent` tool, the cheap model and harness are pinned, and
   an absolute-path call refuses to run inside the sandbox.
 
+## Publishing
+
+This directory is the only part of the private deepclaude repo that becomes public,
+so it is published by `repo/tools/sync-deep-agent-mirror.sh` rather than by
+`git subtree push`. The script exports what git *tracks* (never the working tree),
+runs a leak gate over the export — absolute home paths, transcript slugs, internal
+fix-log ids, launchd uid targets, credential shapes, e-mail addresses — and pushes
+only if the gate passes. `--dry-run` shows the diff without committing.
 
 ### 效率 harness（繁體中文）
 
@@ -274,6 +282,13 @@ loop guard 無狀態——直接讀請求內容，所以 proxy 重啟或對話�
 - `bin/test-deep-run.sh`——`deep-run` 怎麼組出 Claude Code 的呼叫：有沒有講清楚工作目錄、
   沒有 `--bare`、沒有 `Agent` 工具、便宜模型與 harness 有釘住、用絕對路徑呼叫會拒跑。
 
+### 發佈（繁體中文）
+
+這個目錄是私有 deepclaude repo 裡唯一會變公開的部分，所以用
+`repo/tools/sync-deep-agent-mirror.sh` 發佈，不用 `git subtree push`。腳本匯出的是 git
+**追蹤**的內容（絕不是工作目錄），對匯出結果跑一道洩漏閘門——絕對家目錄路徑、transcript
+slug、內部 fix log 編號、launchd uid target、憑證樣式、email——通過才推。`--dry-run`
+只顯示差異不提交。
 
 ## Bench
 
@@ -290,6 +305,6 @@ fixture、`deep-run` 跑任務，判 pass/fail，回合細節寫進 `bench/resul
 
 Symlinks the repo into place (deepclaude's agent / skill / command, plus
 `~/.local/bin/deep-run`). Requires deepclaude
-([royalskynet/deepclaude-flash](https://github.com/royalskynet/deepclaude-flash)) and
+([royalskynet/deepclaude](https://github.com/royalskynet/deepclaude)) and
 `gh` access (`GH_TOKEN` in `~/.creds/kv`, else a `gh auth login`). Rerunnable; must be sourced from the current repo
 checkout.

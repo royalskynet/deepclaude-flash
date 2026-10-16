@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deepclaude launcher.
+# deepclaude launcher — shared between machines.
 # Own CLAUDE_CONFIG_DIR (sessions/history/state separate from ~/.claude). No sync
 # from ~/.claude at all: config/settings.json + config/CLAUDE.md are versioned here.
 # Per-machine overrides use Claude Code's own project-local layer,
@@ -18,7 +18,7 @@ if [[ -s "$_nvm_sh" ]]; then
     _nvm_node="$(bash -c '. "$1" --no-use >/dev/null 2>&1 && nvm which default 2>/dev/null' _ "$_nvm_sh" || true)"
     [[ -n "$_nvm_node" ]] && _nvm_bin="$(dirname "$_nvm_node")"
 fi
-# no default alias / no nvm: newest installed still wins; no-op without nvm
+# no default alias / no nvm: newest installed still wins (fixindex 0848); no-op without nvm
 [[ -z "$_nvm_bin" ]] && _nvm_bin=$(ls -d "$HOME/.nvm/versions/node/"*/bin 2>/dev/null | sort -V | tail -1 || true)
 [[ -n "$_nvm_bin" ]] && PATH="$_nvm_bin:$PATH"
 export PATH
@@ -31,24 +31,54 @@ mkdir -p "$CFG" "$DC_HOME/work"
 
 . "$DC_HOME/bin/lib-creds.sh"
 load_cred CHEAPERINFERENCE_API_KEY cheaperinference
-# OpenRouter keys are reserved for other consumers (other local tools);
+# OpenRouter keys are reserved for other consumers (Jev / OpenClaw free router);
 # deep runs on ci. Drop any inherited copy so `-b or` fails loud instead of
 # borrowing one.
 unset OPENROUTER_API_KEY
 load_cred OMNIROUTE_DEEPCLAUDE_KEY omniroute
-# OpenCode console key; the same key bills the Go subscription at /zen/go.
-load_cred OPENCODE_ZEN_API_KEY opencode
-# Optional search-tool keys, passed through if present.
+# search_web.py reads these from env; without them /research falls back to ddg/mojeek.
 load_cred BRAVE_SEARCH_API_KEY brave
 load_cred FIRECRAWL_API_KEY firecrawl
+
+# Git hooks live in-repo (repo/tools/hooks) so both machines share one file, but
+# core.hooksPath is per-clone config — set it once, here, so a fresh clone gets the
+# deep-agent mirror sync on push without a separate install step.
+# A hooksPath inherited from global config (e.g. a managed pre-push dispatcher) must not
+# be overridden — that would silently bypass it. Such dispatchers chain
+# .git/hooks/pre-push, so link ours there instead.
+if [[ -d "$DC_HOME/.git" ]]; then
+    _hp="$(git -C "$DC_HOME" config --get core.hooksPath 2>/dev/null || true)"
+    if [[ -z "$_hp" ]]; then
+        git -C "$DC_HOME" config core.hooksPath repo/tools/hooks || true
+    elif [[ "$_hp" != repo/tools/hooks && ! -e "$DC_HOME/.git/hooks/pre-push" ]]; then
+        ln -s ../../repo/tools/hooks/pre-push "$DC_HOME/.git/hooks/pre-push" 2>/dev/null || true
+    fi
+fi
+
+# deep-agent ships inside this repo, but its skill/command/deep-run belong to the MAIN
+# ~/.claude (that is where the dispatching session reads them), so a fresh clone still
+# needs install.sh. Same idea as core.hooksPath above: do it here, not by memory.
+# install.sh is idempotent, but it also backs up a real ~/.claude/skills/deep directory,
+# so only run it when a link is actually missing or stale. A failure warns and lets the
+# launcher through — no deep dispatch is not a reason to refuse to start.
+if [[ -x "$DC_HOME/deep-agent/install.sh" ]]; then
+    _da_ok=1
+    for _l in "$HOME/.claude/skills/deep:$DC_HOME/deep-agent/claude/skills/deep" \
+              "$HOME/.claude/commands/deep.md:$DC_HOME/deep-agent/claude/commands/deep.md" \
+              "$HOME/.local/bin/deep-run:$DC_HOME/deep-agent/bin/deep-run"; do
+        [[ "$(readlink "${_l%%:*}" 2>/dev/null)" == "${_l#*:}" ]] || { _da_ok=0; break; }
+    done
+    (( _da_ok )) || "$DC_HOME/deep-agent/install.sh" >/dev/null 2>&1 \
+        || echo "deepclaude: deep-agent install.sh failed; run $DC_HOME/deep-agent/install.sh by hand" >&2
+fi
 
 loc="$DC_HOME/work/.claude/settings.local.json"; seed="$DC_HOME/config/settings.local.$(id -un).json"
 [[ -f "$loc" || ! -f "$seed" ]] || { mkdir -p "${loc%/*}" && cp "$seed" "$loc"; }
 
 export CLAUDE_CONFIG_DIR="$CFG"
-# Default backend: go = OpenCode Go subscription, deepseek-v4-flash for main loop and
-# subagents (Flash only, Pro is refused) (see repo/deepclaude.sh). Override: `deepclaude -b ci` or env.
-export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-go}"
+# Default backend: ci = CheaperInference. Main loop and subagents both
+# deepseek-v4-flash-0731 (Flash only, Pro is refused) (see repo/deepclaude.sh). Override: `deepclaude -b omni` or env.
+export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
 
 unset ANTHROPIC_API_KEY
 exec "$DC_HOME/repo/deepclaude.sh" "$@"

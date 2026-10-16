@@ -39,7 +39,7 @@ caller_inside_tree() {   # $1 = root pid; walks $$'s ancestors; fail-closed if p
 
 # 1. Gracefully stop the happy tree. launchd services are session leaders, so the
 #    job's pgid covers script -> happy -> node -> claude without matching on install paths
-#    (homebrew or nvm installs) and without touching other happy sessions.
+#    (homebrew `happy` or nvm `happy-coder`) and without touching other happy sessions.
 HAPPY_PGID=""
 HAPPY_PID="$(job_pid "$HAPPY_LABEL")"
 if [[ -n "$HAPPY_PID" ]]; then

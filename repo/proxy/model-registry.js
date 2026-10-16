@@ -5,7 +5,7 @@
  * context window, reasoning support and current price of each model it serves.
  * Copying those numbers into a `case` statement is what produced two separate
  * defects: a new model id falling through a catch-all and losing 87% of its output
- * budget, and pinned net prices going stale (the
+ * budget (fixindex 9500), and pinned net prices going stale (fixindex 9501 — the
  * cheaperinference catalog stamps each price with an expiresAt roughly ten minutes
  * out, so a number copied at noon is wrong by lunch).
  *
@@ -71,7 +71,7 @@ export async function loadRegistry(baseUrl, apiKey) {
 
     let entries;
     try {
-        const url = new URL(baseUrl.replace(/\/+$/, '') + '/v1/models');
+        const url = new URL('/v1/models', baseUrl);
         const res = await fetch(url, {
             headers: { Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
             signal: AbortSignal.timeout(10_000),
