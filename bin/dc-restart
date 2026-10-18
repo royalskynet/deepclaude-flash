@@ -75,6 +75,12 @@ fi
 # 3. Restart the resident proxy via launchd (it reaps the old, starts a new one).
 echo "  restarting $PROXY_LABEL..."
 launchctl kickstart -k "gui/$UID_N/$PROXY_LABEL"
+# happy's launcher exits 1 ("resident proxy not reachable") if it starts before the
+# new proxy listens, so wait for it (up to 15s) before relaunching happy.
+for _ in $(seq 30); do
+    curl -sf -o /dev/null --max-time 1 "http://127.0.0.1:$PROXY_PORT/_proxy/status" && break
+    sleep 0.5
+done
 
 # 3b. Relaunch happy (KeepAlive=false, so launchd won't bring it back on its own).
 if launchctl print "gui/$UID_N/$HAPPY_LABEL" >/dev/null 2>&1; then
