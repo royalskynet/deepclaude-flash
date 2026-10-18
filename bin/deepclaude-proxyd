@@ -41,9 +41,16 @@ done
 [[ -z "$key" ]] && { echo "ERROR: no API key for backend '$BACKEND'" >&2; exit 1; }
 
 export DC_MODEL="$model"
-# Pro for the main loop, Flash for subagents (ci only — omni stays single-model).
-export DC_SUBAGENT_MODEL="${submodel:-}"
-export DC_SUBAGENT_MAX_OUTPUT="${submaxout:-}"
+# Split only when the subagent model differs (same rule as resolve_backend in
+# repo/deepclaude.sh). Both are Flash now; setting it anyway made the proxy tag every
+# happy main-loop call as subagent: subagent harness, no main harness, no loop guard.
+if [[ -n "$submodel" && "$submodel" != "$model" ]]; then
+    export DC_SUBAGENT_MODEL="$submodel" DC_SUBAGENT_MAX_OUTPUT="${submaxout:-}"
+else
+    export DC_SUBAGENT_MODEL="" DC_SUBAGENT_MAX_OUTPUT=""
+fi
+# Same default as the per-session proxy (repo/deepclaude.sh launch_claude).
+export DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}"
 # Classifier short-circuit toggle for the resident proxy. off=forward classifier
 # upstream (old abort-prone behavior); allow=answer <block>no</block> inline so
 # Claude Code's auto-mode security-classifier never hits the cheap/agnese backend

@@ -210,6 +210,15 @@ function loopNudges({ rounds, singles, narration, narrationPrev }) {
 }
 
 /** Prepend a harness to an Anthropic `system` field (string or block array). */
+// Backend dropped the history: 2026-10-17 a happy turn sent 146335b and was billed
+// 11018 input tokens (model answered "this conversation just started"); replaying the
+// same transcript cold billed 37k. Across 2565 logged calls bytes/token peaks at 5.0,
+// so >8 on a non-trivial body means the backend saw only system+tools+last message.
+// ponytail: detect + dump only; retrying would need aborting before the first SSE byte.
+export function contextDropSuspect(bytes, tokens) {
+    return bytes > 40000 && tokens > 0 && bytes / tokens > 8;
+}
+
 function prependHarness(parsed, harness) {
     if (!harness) return false;
     const sys = parsed.system;
@@ -800,7 +809,17 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             const ip = norm._inputParts;
                             // Fresh and cached input are billed at rates an order of magnitude
                             // apart, so a single total cannot be priced. Keep them separate.
-                            console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${ip.input_tokens + ip.cache_read_input_tokens + ip.cache_creation_input_tokens}in/${norm._outputTokens}out; fresh=${ip.input_tokens} cacheR=${ip.cache_read_input_tokens} cacheW=${ip.cache_creation_input_tokens})`);
+                            const inTotal = ip.input_tokens + ip.cache_read_input_tokens + ip.cache_creation_input_tokens;
+                            console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${inTotal}in/${norm._outputTokens}out; fresh=${ip.input_tokens} cacheR=${ip.cache_read_input_tokens} cacheW=${ip.cache_creation_input_tokens})`);
+                            if (contextDropSuspect(body.length, inTotal)) {
+                                const dir = join(process.env.DC_HOME || join(process.env.HOME || '/tmp', '.deepclaude'), 'cache', 'context-drop');
+                                const file = join(dir, `req-${new Date().toISOString().replace(/[:.]/g, '-')}-${reqId}.json`);
+                                try {
+                                    mkdirSync(dir, { recursive: true, mode: 0o700 });
+                                    writeFileSync(file, body, { mode: 0o600 });
+                                } catch (e) { console.error(`[MODEL-PROXY] context-drop dump failed: ${e.message}`); }
+                                console.error(`[MODEL-PROXY] #${reqId} WARN context-drop: sent ${body.length}b but backend billed ${inTotal} input tokens (${(body.length / inTotal).toFixed(1)} b/tok; normal ≤5) — history likely dropped upstream; body → ${file}`);
+                            }
                         });
                     } else if (isModelCall && ct.includes('application/json')) {
                         const respChunks = [];
