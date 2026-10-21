@@ -71,7 +71,9 @@ export async function loadRegistry(baseUrl, apiKey) {
 
     let entries;
     try {
-        const url = new URL('/v1/models', baseUrl);
+        // Keep the base path: OpenCode Go lives at /zen/go, and an absolute
+        // '/v1/models' would resolve to the site root instead.
+        const url = new URL(baseUrl.replace(/\/$/, '').replace(/\/v1$/, '') + '/v1/models');
         const res = await fetch(url, {
             headers: { Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey },
             signal: AbortSignal.timeout(10_000),

@@ -45,7 +45,9 @@ RC="$DC_HOME/work/.deep/$EPOCH.rc"
   unset CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
 
   # Same flags as the pre-split deep-run; the inner loop is the unchanged main body.
-  deepclaude -p "$(cat "$copy")" --output-format text \
+  # 工單常以 frontmatter `---` 開頭；裸傳會被 CLI 當成選項（`unknown option '---`，WO-12 10-19），
+  # 所以固定加一行前綴，-p 的值永遠不以 `-` 起頭。
+  deepclaude -p "Task file:"$'\n'"$(cat "$copy")" --output-format text \
     --system-prompt-file "$DC_HOME/config/deep-system.md" \
     --append-system-prompt "Working directory: $d — you are already in it. Every relative path in the task resolves under it. Do not search the filesystem for the task's files; if something is missing, \`ls\` here and report what is actually present." \
     --tools Bash,Read,Edit,Write,Glob,Grep \

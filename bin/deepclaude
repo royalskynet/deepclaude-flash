@@ -30,9 +30,9 @@ mkdir -p "$CFG" "$DC_HOME/work"
 [[ "$PWD" == "$HOME" ]] && cd "$DC_HOME/work"
 
 . "$DC_HOME/bin/lib-creds.sh"
-load_cred CHEAPERINFERENCE_API_KEY cheaperinference
+load_cred OPENCODE_ZEN_API_KEY opencode
 # OpenRouter keys are reserved for other consumers (Jev / OpenClaw free router);
-# deep runs on ci. Drop any inherited copy so `-b or` fails loud instead of
+# deep runs on go. Drop any inherited copy so `-b or` fails loud instead of
 # borrowing one.
 unset OPENROUTER_API_KEY
 load_cred OMNIROUTE_DEEPCLAUDE_KEY omniroute
@@ -68,9 +68,9 @@ loc="$DC_HOME/work/.claude/settings.local.json"; seed="$DC_HOME/config/settings.
 [[ -f "$loc" || ! -f "$seed" ]] || { mkdir -p "${loc%/*}" && cp "$seed" "$loc"; }
 
 export CLAUDE_CONFIG_DIR="$CFG"
-# Default backend: ci = CheaperInference. Main loop and subagents both
-# deepseek-v4-flash-0731 (Flash only, Pro is refused) (see repo/deepclaude.sh). Override: `deepclaude -b omni` or env.
-export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
+# Default backend: go = OpenCode Go (ci retired 2026-10-18). Main loop and subagents both
+# deepseek-v4.1-flash (Flash only, Pro is refused) (see repo/deepclaude.sh). Override: `deepclaude -b omni` or env.
+export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-go}"
 
 unset ANTHROPIC_API_KEY
 exec "$DC_HOME/repo/deepclaude.sh" "$@"

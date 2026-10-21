@@ -39,10 +39,15 @@ CI_SUBAGENT_MODEL="${CHEAPERINFERENCE_SUBAGENT_MODEL:-deepseek-v4-flash-0731}"
 # max_output of the subagent model; the proxy clamps subagent requests to it so
 # the main model's CLAUDE_CODE_MAX_OUTPUT_TOKENS never overflows Flash's 65536 cap.
 CI_SUBAGENT_MAX_OUTPUT="${CHEAPERINFERENCE_SUBAGENT_MAX_OUTPUT:-65536}"
+# 2026-10-18: ci retired; default is OpenCode Go (subscription, per-model monthly cap).
+# deepseek-v4.1-flash has the largest Go cap ($80/mo) and keeps the Flash-only policy.
+# Go's /v1/models carries no caps; they live in proxy/models.local.json (393216 probed).
+GO_DEFAULT_URL="https://opencode.ai/zen/go"
+GO_MODEL="${OPENCODE_GO_MODEL:-deepseek-v4.1-flash}"
 OMNIROUTE_DEFAULT_URL="http://127.0.0.1:20128"
 OMNI_MODEL="${OMNIROUTE_MODEL:-free-tools}"
 
-BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
+BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-go}"
 ACTION="launch"
 SWITCH_BACKEND=""
 PROXY_PID=""
@@ -100,13 +105,14 @@ resolve_backend() {
             opus="${FIREWORKS_MODEL:-accounts/fireworks/models/deepseek-v4-flash}"
             sonnet="$opus"; haiku="$opus"; subagent="$opus"
             ;;
+        go|opencode-go)
+            key="${OPENCODE_ZEN_API_KEY:-}"
+            [[ -z "$key" ]] && { echo "ERROR: OPENCODE_ZEN_API_KEY not set" >&2; exit 1; }
+            url="${OPENCODE_GO_URL:-$GO_DEFAULT_URL}"
+            opus="$GO_MODEL"; sonnet="$GO_MODEL"; haiku="$GO_MODEL"; subagent="$GO_MODEL"
+            ;;
         ci|cheaper|cheaperinference)
-            key="${CHEAPERINFERENCE_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: CHEAPERINFERENCE_API_KEY not set" >&2; exit 1; }
-            url="${CHEAPERINFERENCE_URL:-$CHEAPERINFERENCE_DEFAULT_URL}"
-            opus="$CI_MODEL"; sonnet="$CI_MODEL"
-            haiku="$CI_SUBAGENT_MODEL"; subagent="$CI_SUBAGENT_MODEL"
-            sub_max_out="$CI_SUBAGENT_MAX_OUTPUT"
+            echo "ERROR: backend 'ci' (CheaperInference) retired 2026-10-18; use 'go'." >&2; exit 1
             ;;
         omni|omniroute)
             key="${OMNIROUTE_DEEPCLAUDE_KEY:-}"
@@ -116,7 +122,7 @@ resolve_backend() {
             haiku="$OMNI_MODEL"; subagent="$OMNI_MODEL"
             ;;
         anthropic) ;;
-        *) echo "ERROR: Unknown backend '$BACKEND'. Use: ci, omni, ds, or, fw, anthropic" >&2; exit 1 ;;
+        *) echo "ERROR: Unknown backend '$BACKEND'. Use: go, omni, ds, or, fw, anthropic" >&2; exit 1 ;;
     esac
     # Flash-only policy: refuse any DeepSeek Pro id, including env overrides.
     local m
@@ -186,7 +192,7 @@ show_status() {
     echo "    DEEPSEEK_API_KEY:    $(mask_key "${DEEPSEEK_API_KEY:-}")"
     echo "    OPENROUTER_API_KEY:  $(mask_key "${OPENROUTER_API_KEY:-}")"
     echo "    FIREWORKS_API_KEY:   $(mask_key "${FIREWORKS_API_KEY:-}")"
-    echo "    CHEAPERINFERENCE_API_KEY: $(mask_key "${CHEAPERINFERENCE_API_KEY:-}")"
+    echo "    OPENCODE_ZEN_API_KEY: $(mask_key "${OPENCODE_ZEN_API_KEY:-}")"
     echo "    OMNIROUTE_DEEPCLAUDE_KEY: $(mask_key "${OMNIROUTE_DEEPCLAUDE_KEY:-}")"
     echo "    CLAUDE_CONFIG_DIR:   ${CLAUDE_CONFIG_DIR:-<default ~/.claude>}"
     echo ""
@@ -253,7 +259,7 @@ show_help() {
     echo "Usage: deepclaude [options] [-- claude-args...]"
     echo ""
     echo "Options:"
-    echo "  -b, --backend <ci|omni|ds|or|fw|anthropic>  Backend (default: ci)"
+    echo "  -b, --backend <go|omni|ds|or|fw|anthropic>  Backend (default: go)"
     echo "  -r, --remote                        Remote control mode (browser URL)"
     echo "  --happy                              Launch happy against the resident proxy"
     echo "  --status                             Show keys and backends"
@@ -267,7 +273,7 @@ show_help() {
     echo "  OPENROUTER_API_KEY    OpenRouter API key (required for or)"
     echo "  FIREWORKS_API_KEY     Fireworks API key (required for fw)"
     echo "  OMNIROUTE_DEEPCLAUDE_KEY  OmniRoute API key (required for omni)"
-    echo "  CHEAPCLAUDE_DEFAULT_BACKEND  Default backend (default: ci)"
+    echo "  CHEAPCLAUDE_DEFAULT_BACKEND  Default backend (default: go)"
 }
 
 do_switch() {
@@ -277,7 +283,7 @@ do_switch() {
         or|openrouter) backend="openrouter" ;;
         fw|fireworks)  backend="fireworks" ;;
         anthropic)     backend="anthropic" ;;
-        *) echo "ERROR: Unknown backend '$backend'. Use: ci, ds, or, fw, anthropic" >&2; exit 1 ;;
+        *) echo "ERROR: Unknown backend '$backend'. Use: ds, or, fw, anthropic" >&2; exit 1 ;;
     esac
     local resp
     resp=$(curl -sX POST http://127.0.0.1:3200/_proxy/mode -d "backend=$backend" 2>/dev/null) || {

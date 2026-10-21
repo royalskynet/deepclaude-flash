@@ -5,6 +5,7 @@ import { Transform } from 'stream';
 import { writeFileSync, mkdirSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import { loadRegistry } from './model-registry.js';
 
 // Per-model caps, filled in from the provider catalog once the proxy is up. Null
@@ -18,6 +19,8 @@ let REGISTRY = null;
 { const _e = console.error.bind(console); console.error = (...a) => _e(new Date().toISOString(), ...a); }
 
 const ANTHROPIC_FALLBACK = 'https://api.anthropic.com';
+// Fallback x-opencode-session for callers that send no Claude Code session id.
+const PROXY_SESSION_ID = randomUUID();
 // Requests that must reach the third-party backend, not the Anthropic fallback.
 // /v1/messages is the model call. /v1/models is the catalog query Claude Code's SDK
 // issues against the backend to validate the configured model id (`query_source:sdk`);
@@ -614,6 +617,11 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     headers['authorization'] = `Bearer ${state.apiKey}`;
                 } else {
                     headers['x-api-key'] = state.apiKey;
+                }
+                // OpenCode Go rejects requests without a session id; reuse the one
+                // Claude Code already sends so Go's per-session accounting matches ours.
+                if (dest.hostname === 'opencode.ai' && !headers['x-opencode-session']) {
+                    headers['x-opencode-session'] = clientReq.headers['x-claude-code-session-id'] || PROXY_SESSION_ID;
                 }
             }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Resident model-proxy for happy (launchd-managed, KeepAlive). Backend is fixed at
-# start from CHEAPCLAUDE_DEFAULT_BACKEND (ci/omni only — the case below duplicates
+# start from CHEAPCLAUDE_DEFAULT_BACKEND (go/omni only — the case below duplicates
 # resolve_backend() from repo/deepclaude.sh on purpose, so this never sources that
 # script and loops back into a launcher).
 set -euo pipefail
@@ -9,18 +9,20 @@ export PATH="/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
 
 DC_HOME="${DC_HOME:-$HOME/.deepclaude}"
 . "$DC_HOME/bin/lib-creds.sh"
-load_cred CHEAPERINFERENCE_API_KEY cheaperinference
+load_cred OPENCODE_ZEN_API_KEY opencode
 load_cred OMNIROUTE_DEEPCLAUDE_KEY omniroute
 
 submodel=""; submaxout=""
-BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ci}"
+BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-go}"
 case "$BACKEND" in
+    go|opencode-go)
+        url="${OPENCODE_GO_URL:-https://opencode.ai/zen/go}"
+        key="${OPENCODE_ZEN_API_KEY:-}"
+        model="${OPENCODE_GO_MODEL:-deepseek-v4.1-flash}"
+        ;;
     ci|cheaper|cheaperinference)
-        url="${CHEAPERINFERENCE_URL:-https://api.cheaperinference.com}"
-        key="${CHEAPERINFERENCE_API_KEY:-}"
-        model="${CHEAPERINFERENCE_MODEL:-deepseek-v4-flash-0731}"
-        submodel="${CHEAPERINFERENCE_SUBAGENT_MODEL:-deepseek-v4-flash-0731}"
-        submaxout="${CHEAPERINFERENCE_SUBAGENT_MAX_OUTPUT:-65536}"
+        echo "ERROR: backend 'ci' (CheaperInference) retired 2026-10-18; use 'go'." >&2
+        exit 1
         ;;
     omni|omniroute)
         url="http://127.0.0.1:20128"
@@ -28,7 +30,7 @@ case "$BACKEND" in
         model="${OMNIROUTE_MODEL:-free-tools}"
         ;;
     *)
-        echo "ERROR: deepclaude-proxyd only supports ci/omni, got '$BACKEND'" >&2
+        echo "ERROR: deepclaude-proxyd only supports go/omni, got '$BACKEND'" >&2
         exit 1
         ;;
 esac

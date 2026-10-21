@@ -15,12 +15,12 @@ mkdir -p "$tmp/home/.local/bin" "$tmp/work" "$tmp/home/.deepclaude/config" "$tmp
 # the snapshot into the real runtime copy and silently break every assertion below.
 export DC_HOME="$tmp/home/.deepclaude"
 touch "$tmp/home/.deepclaude/config/deep-system.md"
-echo 'task' > "$tmp/task.md"
+printf -- '---\nid: WO-0\n---\ntask\n' > "$tmp/task.md"
 
 cat > "$tmp/home/.local/bin/deepclaude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$STUB_ARGV"
-env | grep -E '^(CHEAPERINFERENCE_MODEL|DC_MAIN_HARNESS_FILE|DC_LOOP_GUARD|GH_TOKEN|DEEP_TASK_FILE)=' | sort > "$STUB_ENV"
+env | grep -E '^(OPENCODE_GO_MODEL|DC_MAIN_HARNESS_FILE|DC_LOOP_GUARD|GH_TOKEN|DEEP_TASK_FILE)=' | sort > "$STUB_ENV"
 STUB
 chmod +x "$tmp/home/.local/bin/deepclaude"
 # No kv token in the fake creds dir, so deep-run must take GH_TOKEN from `gh auth token`.
@@ -48,7 +48,7 @@ check "no --bare"                                  '! grep -qx -- "--bare" <<< "
 check "no Agent tool"                              '! grep -q "Agent" <<< "$argv"'
 check "--permission-mode bypassPermissions"        'grep -qx -- "bypassPermissions" <<< "$argv"'
 check "--max-turns set"                            'grep -qx -- "--max-turns" <<< "$argv"'
-check "pins the cheap model"                       'grep -q "^CHEAPERINFERENCE_MODEL=deepseek-v4-flash" <<< "$envs"'
+check "pins the cheap model"                       'grep -q "^OPENCODE_GO_MODEL=deepseek-v4.1-flash" <<< "$envs"'
 check "points the proxy at the main harness"       'grep -q "^DC_MAIN_HARNESS_FILE=.*deep-harness.md$" <<< "$envs"'
 check "loop guard on by default"                   'grep -qx "DC_LOOP_GUARD=on" <<< "$envs"'
 # Without a token deep cannot `gh search` for an existing wheel, so a machine with no
@@ -60,8 +60,10 @@ check "GH_TOKEN falls back to gh auth token"      'grep -qx "GH_TOKEN=stub-gh-to
 # run mints a fresh epoch, so the copy must be globbed.
 p_body="$(awk '$0=="-p"{on=1;next} on&&$0=="--output-format"{on=0} on{print}' "$tmp/argv")"
 snapshot="$(cat "$tmp/home/.deepclaude/work/.deep/"*-task.md)"
+# 工單以 `---` frontmatter 開頭：-p 的值若以 `-` 起頭，真 CLI 會報 unknown option（WO-12 10-19）。
+check "(-p) value never starts with -"             '[ -n "$p_body" ] && [ "${p_body:0:1}" != "-" ]'
 check "(-p) body is the read-only work/.deep snapshot" \
-  '[ "$p_body" = "$snapshot" ] && ls -l "$tmp/home/.deepclaude/work/.deep/"*-task.md | grep -qF -- "-r--r--r--"'
+  '[ "$p_body" = "Task file:"$'"'"'\n'"'"'"$snapshot" ] && ls -l "$tmp/home/.deepclaude/work/.deep/"*-task.md | grep -qF -- "-r--r--r--"'
 # (b) The snapshot path also goes to deep via DEEP_TASK_FILE, so deep knows the file
 # the caller-and-judge keep consistent.
 dtf_env="$(grep '^DEEP_TASK_FILE=' "$tmp/env" | cut -d= -f2-)"
