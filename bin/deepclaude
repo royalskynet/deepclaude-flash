@@ -66,6 +66,9 @@ done
 
 loc="$DC_HOME/work/.claude/settings.local.json"; seed="$DC_HOME/config/settings.local.$(id -un).json"
 [[ -f "$loc" || ! -f "$seed" ]] || { mkdir -p "${loc%/*}" && cp "$seed" "$loc"; }
+# Per-machine opt-in: mirror main ~/.claude tools (see bin/dc-sync-main). Runs before claude
+# starts so claude's own .claude.json writes can't race it; a failure must not block launch.
+[[ -f "$DC_HOME/work/.claude/.sync-main" ]] && { "$DC_HOME/bin/dc-sync-main" >&2 || echo "deepclaude: dc-sync-main failed" >&2; }
 
 export CLAUDE_CONFIG_DIR="$CFG"
 # Default backend: go = OpenCode Go (ci retired 2026-10-18). Main loop and subagents both

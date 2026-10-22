@@ -421,6 +421,13 @@ launch_happy() {
     resolve_backend
 
     local proxy_url="${DC_PROXY_URL:-http://127.0.0.1:20133}"
+    # At login both launchd jobs start together and happy has KeepAlive=false, so wait
+    # for the resident proxy instead of exiting on the first miss (up to 30s).
+    local _i
+    for _i in $(seq 60); do
+        curl -s --max-time 1 "$proxy_url/_proxy/status" >/dev/null 2>&1 && break
+        sleep 0.5
+    done
     if ! curl -s "$proxy_url/_proxy/status" >/dev/null 2>&1; then
         echo "ERROR: resident proxy not reachable at $proxy_url" >&2
         echo "  Start it: launchctl bootstrap gui/\$(id -u) ~/.deepclaude/launchd/local.deepclaude.proxy.plist" >&2
@@ -428,7 +435,10 @@ launch_happy() {
     fi
 
     export ANTHROPIC_BASE_URL="$proxy_url"
-    export ANTHROPIC_AUTH_TOKEN="$RESOLVED_KEY"
+    # The resident proxy holds the upstream key (CHEAPCLAUDE_API_KEY) and ignores the
+    # client token. --claude-env puts values in argv, so passing $RESOLVED_KEY here
+    # exposed it to `ps` (2026-10-22). Send a placeholder instead.
+    export ANTHROPIC_AUTH_TOKEN="resident-proxy-holds-key"
     set_model_env
 
     # happy does not forward the parent's env — every var it needs must be
