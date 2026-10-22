@@ -46,11 +46,18 @@ SKIP_KEYS = {"env", "model", "statusLine", "effortLevel", "autoCompactWindow", "
 MIRROR_ENV = {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS", "JEV_TRIAGE_ENABLED", "JEV_PROVIDER",
               "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"}
 
+# single-instance plugins: a second copy would fight main for the same resource
+# (telegram: two pollers on one bot token -> 409 Conflict)
+SKIP_PLUGINS = {"telegram@claude-plugins-official"}
+
 for k, v in main.items():
     if k in SKIP_KEYS:
         continue
     if k in ("enabledPlugins", "extraKnownMarketplaces"):
         out.setdefault(k, {}).update(v)
+        if k == "enabledPlugins":
+            for p in SKIP_PLUGINS & set(out[k]):
+                out[k][p] = False
     else:
         out[k] = v
 env = {k: v for k, v in main.get("env", {}).items() if k in MIRROR_ENV}
