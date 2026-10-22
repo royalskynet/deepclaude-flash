@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# dc-sync-main — mirror this machine's main ~/.claude tools into the deepclaude instance.
+# Machine-local only: writes work/.claude/ (project-local layer, never committed),
+# config/plugins (symlink) and config/.claude.json mcpServers. The shared
+# config/settings.json is never touched. Idempotent; safe to rerun after main changes.
+# Opt-in per machine: bin/deepclaude runs this on launch only when work/.claude/.sync-main exists.
+# Trade-off (README "Why no sync from ~/.claude"): every mirrored hook/plugin/MCP adds
+# per-turn context on the Go subscription. Exclusions are in MIRROR_ENV / SKIP_KEYS below.
+set -euo pipefail
+
+DC_HOME="${DC_HOME:-$HOME/.deepclaude}"
+MAIN="$HOME/.claude"
+WORK="$DC_HOME/work/.claude"
+CFG="$DC_HOME/config"
+mkdir -p "$WORK"
+
+# symlink $1 -> $2; a real file/dir in the way is moved aside, never deleted.
+link() {
+    local src="$1" dst="$2"
+    [[ -e "$src" ]] || { echo "  skip $dst (no $src)"; return; }
+    if [[ -L "$dst" ]]; then
+        [[ "$(readlink "$dst")" == "$src" ]] && return
+        rm "$dst"
+    elif [[ -e "$dst" ]]; then
+        mv "$dst" "$dst.bak-$(date +%Y%m%d-%H%M%S)"
+        echo "  moved aside $dst"
+    fi
+    ln -s "$src" "$dst" && echo "  linked $dst -> $src"
+}
+
+for d in skills agents commands; do link "$MAIN/$d" "$WORK/$d"; done
+link "$MAIN/plugins" "$CFG/plugins"
+
+seed="$CFG/settings.local.$(id -un).json"
+python3 -I - "$MAIN/settings.json" "$seed" "$WORK/settings.local.json" "$HOME/.claude.json" "$CFG/.claude.json" "$HOME" <<'EOF'
+import json, os, sys
+main_p, seed_p, out_p, main_state_p, dc_state_p, home = sys.argv[1:]
+main = json.load(open(main_p))
+out = json.load(open(seed_p)) if os.path.exists(seed_p) else {}
+
+# keys that would break or override deepclaude's own model/backend/UI are not mirrored
+SKIP_KEYS = {"env", "model", "statusLine", "effortLevel", "autoCompactWindow", "tui",
+             "theme", "sandbox", "channelsEnabled", "disableRemoteControl",
+             "agentPushNotifEnabled", "disableClaudeAiConnectors"}
+# env: only what hooks read; telemetry/OTEL/proxy env stay off in deepclaude on purpose
+MIRROR_ENV = {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS", "JEV_TRIAGE_ENABLED", "JEV_PROVIDER",
+              "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"}
+
+for k, v in main.items():
+    if k in SKIP_KEYS:
+        continue
+    if k in ("enabledPlugins", "extraKnownMarketplaces"):
+        out.setdefault(k, {}).update(v)
+    else:
+        out[k] = v
+env = {k: v for k, v in main.get("env", {}).items() if k in MIRROR_ENV}
+if env:
+    out.setdefault("env", {}).update(env)
+
+# config/settings.json already runs some of the same guards via "$HOME/..." —
+# drop mirrored hooks whose command is identical after expanding $HOME.
+dc = json.load(open(os.path.join(os.path.dirname(dc_state_p), "settings.json")))
+norm = lambda c: c.replace('"$HOME', '"' + home).replace("$HOME", home).replace('"', "")
+existing = {norm(h.get("command", "")) for arr in dc.get("hooks", {}).values()
+            for m in arr for h in m.get("hooks", [])}
+hooks = {}
+for ev, arr in out.get("hooks", {}).items():
+    new_arr = []
+    for m in arr:
+        hs = [h for h in m.get("hooks", []) if norm(h.get("command", "")) not in existing]
+        if hs:
+            new_arr.append({**m, "hooks": hs})
+    if new_arr:
+        hooks[ev] = new_arr
+out["hooks"] = hooks
+
+tmp = out_p + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(out, f, indent=2)
+os.replace(tmp, out_p)
+n_hooks = sum(len(m["hooks"]) for arr in hooks.values() for m in arr)
+print(f"  settings.local.json: {n_hooks} hooks, {len(out.get('enabledPlugins', {}))} plugin entries")
+
+# MCP servers: main user scope -> deepclaude user scope (values never printed)
+ms = json.load(open(main_state_p)).get("mcpServers", {})
+st = json.load(open(dc_state_p))
+st["mcpServers"] = ms
+tmp = dc_state_p + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(st, f, indent=2)
+os.chmod(tmp, 0o600)
+os.replace(tmp, dc_state_p)
+print(f"  mcpServers: {sorted(ms)}")
+EOF
+touch "$WORK/.sync-main"
