@@ -342,7 +342,8 @@ launch_claude() {
     # normalize usage. Direct-to-backend skips both.
     local port_file proxy_port
     port_file=$(mktemp "${TMPDIR:-/tmp}/deepclaude-port.XXXXXX")  # explicit template: macOS mktemp ignores TMPDIR otherwise
-    DC_MODEL="$RESOLVED_OPUS" DC_SUBAGENT_MODEL="$RESOLVED_SUBAGENT_SPLIT" DC_SUBAGENT_MAX_OUTPUT="$RESOLVED_SUBAGENT_MAX_OUTPUT" DC_CLASSIFIER_MODE="${DC_CLASSIFIER_MODE:-allow}" DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}" # key 不走 argv：`ps` 全機可見
+    # key 不走 argv：`ps` 全機可見（註解不能放在續行行尾，否則 \ 失效、env 傳不到 proxy）
+    DC_MODEL="$RESOLVED_OPUS" DC_SUBAGENT_MODEL="$RESOLVED_SUBAGENT_SPLIT" DC_SUBAGENT_MAX_OUTPUT="$RESOLVED_SUBAGENT_MAX_OUTPUT" DC_CLASSIFIER_MODE="${DC_CLASSIFIER_MODE:-allow}" DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}" \
         CHEAPCLAUDE_API_KEY="$RESOLVED_KEY" node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "" > "$port_file" 2>> "${DC_HOME:-$HOME/.deepclaude}/proxy.log" &
     PROXY_PID=$!
     local tries=0
@@ -386,7 +387,8 @@ launch_remote() {
 
     local port_file
     port_file=$(mktemp "${TMPDIR:-/tmp}/deepclaude-port.XXXXXX")  # explicit template: macOS mktemp ignores TMPDIR otherwise
-    DC_MODEL="$RESOLVED_OPUS" DC_SUBAGENT_MODEL="$RESOLVED_SUBAGENT_SPLIT" DC_SUBAGENT_MAX_OUTPUT="$RESOLVED_SUBAGENT_MAX_OUTPUT" DC_CLASSIFIER_MODE="${DC_CLASSIFIER_MODE:-allow}" DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}" # key 不走 argv：`ps` 全機可見
+    # key 不走 argv：`ps` 全機可見（註解不能放在續行行尾，否則 \ 失效、env 傳不到 proxy）
+    DC_MODEL="$RESOLVED_OPUS" DC_SUBAGENT_MODEL="$RESOLVED_SUBAGENT_SPLIT" DC_SUBAGENT_MAX_OUTPUT="$RESOLVED_SUBAGENT_MAX_OUTPUT" DC_CLASSIFIER_MODE="${DC_CLASSIFIER_MODE:-allow}" DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}" \
         CHEAPCLAUDE_API_KEY="$RESOLVED_KEY" node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "" > "$port_file" 2>> "${DC_HOME:-$HOME/.deepclaude}/proxy.log" &
     PROXY_PID=$!
 

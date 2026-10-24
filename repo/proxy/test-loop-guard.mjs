@@ -100,9 +100,10 @@ assert.ok(!nudge(seen[3]).includes('一次全部發完'), 'a batched round must 
 await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(2, 2, 'x'.repeat(80)) });
 assert.ok(nudge(seen[4]).includes('只貼指令與原始輸出'), 'narration over budget must trip the terse nudge');
 
-// 6. Round 15 trips the converge-or-stop nudge.
+// 6. Round 15 stays silent: D1 10-23 (n=8/arm) soft round nudges bought no acceptance
+//    (on 7/8 = off 7/8) and cost +27% rounds; off-arm legit serial work finished by 75.
 await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(15, 2) });
-assert.ok(nudge(seen[5]).includes('NOT DONE'), 'round 15 must trip the convergence nudge');
+assert.strictEqual(nudge(seen[5]), '', 'round 15 must not nudge');
 
 // 7. The nudge is appended as the last block of the last user turn (folded from a
 //    system message) — never a mutation of the assistant history the client owns.
@@ -135,13 +136,14 @@ assert.ok(nudge(seen[11]).includes('只貼指令與原始輸出'), 'crossing the
 await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(5, 2, 'x'.repeat(30)) });
 assert.strictEqual(nudge(seen[12]), '', 'staying inside the same narration band must stay silent');
 
-// 11. The round nudge escalates rather than repeating. Repetition is what an ignored
-//     nudge looks like: 8/78 corpus sessions would get four or more identical ones.
+// 11. Only the hard stop remains: silent at 30/45, forced report at 90.
 await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(30, 2) });
-assert.ok(nudge(seen[13]).includes('二選一'), 'the 2nd round nudge still offers the choice');
+assert.strictEqual(nudge(seen[13]), '', 'round 30 must not nudge');
 await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(45, 2) });
-assert.ok(nudge(seen[14]).includes('第 3 次') && !nudge(seen[14]).includes('二選一'),
-    'the 3rd round nudge escalates and stops offering a choice');
+assert.strictEqual(nudge(seen[14]), '', 'round 45 must not nudge');
+await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(90, 2) });
+assert.ok(nudge(seen[15]).includes('已經 90 輪') && nudge(seen[15]).includes('NOT DONE') && !nudge(seen[15]).includes('二選一'),
+    'round 90 forces the final report');
 
-console.log('OK: 15/15 loop-guard checks passed');
+console.log('OK: 16/16 loop-guard checks passed');
 process.exit(0);

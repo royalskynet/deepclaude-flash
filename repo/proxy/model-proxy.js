@@ -121,6 +121,7 @@ const LOOP_GUARD = process.env.DC_LOOP_GUARD === 'on';
 const GUARD_SINGLES = Number(process.env.DC_GUARD_SINGLES) || 4;
 const GUARD_NARRATION = Number(process.env.DC_GUARD_NARRATION) || 3000;
 const GUARD_ROUNDS = Number(process.env.DC_GUARD_ROUNDS) || 15;
+const GUARD_HARD_NTH = Number(process.env.DC_GUARD_HARD_NTH) || 6;
 
 /**
  * Top-level command count in a shell string: ; && || and bare newlines separate
@@ -199,15 +200,10 @@ function loopNudges({ rounds, singles, narration, narrationPrev }) {
     if (narrationBand(narration) > narrationBand(narrationPrev)) {
         out.push(`你已經寫了 ${narration} 字敘述。接下來只貼指令與原始輸出：不要行動旁白、不要覆述工具結果、不要事前列計畫。`);
     }
-    if (rounds >= GUARD_ROUNDS && rounds % GUARD_ROUNDS === 0) {
-        // Escalate instead of repeating. In the corpus 8/78 sessions cross the round
-        // threshold four times or more and one crosses it seventeen times; a live run
-        // ignored the identical sentence six times running. Saying the same thing again
-        // is what an ignored nudge looks like, so the third one stops offering a choice.
-        const nth = rounds / GUARD_ROUNDS;
-        out.push(nth < 3
-            ? `已經 ${rounds} 輪。二選一，沒有第三個選項：(a) 這一輪做完並回報；(b) 停手，已完成的寫進報告、其餘列 NOT DONE。不准繼續探索。`
-            : `已經 ${rounds} 輪，這是第 ${nth} 次要求你收斂，前 ${nth - 1} 次都沒有效果。沒有選項了：這一輪就輸出最終報告，已完成的寫進去、其餘全部列 NOT DONE 並附原始錯誤。不准再開任何新的探索、不准再讀新檔案。`);
+    // Hard stop only. D1 10-23 (n=8/arm): soft nudges every 15 rounds bought no acceptance
+    // (on 7/8 = off 7/8) and cost +27% rounds; off-arm legit serial work finished by 75.
+    if (rounds >= GUARD_ROUNDS * GUARD_HARD_NTH && rounds % GUARD_ROUNDS === 0) {
+        out.push(`已經 ${rounds} 輪。沒有選項了：這一輪就輸出最終報告，已完成的寫進去、其餘全部列 NOT DONE 並附原始錯誤。不准再開任何新的探索、不准再讀新檔案。`);
     }
     return out;
 }

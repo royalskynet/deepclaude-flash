@@ -99,4 +99,14 @@ os.chmod(tmp, 0o600)
 os.replace(tmp, dc_state_p)
 print(f"  mcpServers: {sorted(ms)}")
 EOF
+
+# 11253: a sync can repoint or replace the repo behind config/hooks; every hook symlink that
+# no longer resolves makes Claude Code skip the hook silently or fail every Stop. Relink, and
+# surface the rc without failing the sync (a broken hook must not block launching claude).
+if [[ -x "$DC_HOME/bin/deep-hook-relink.sh" ]]; then
+    relink_rc=0
+    relink_out="$("$DC_HOME/bin/deep-hook-relink.sh" 2>&1)" || relink_rc=$?
+    [[ -z "$relink_out" ]] || echo "$relink_out" | sed 's/^/  /'
+    [[ "$relink_rc" -eq 0 ]] || echo "  WARNING: dangling config/hooks symlinks remain (rc=$relink_rc)"
+fi
 touch "$WORK/.sync-main"
