@@ -16,22 +16,50 @@ Run Claude Code against cheap DeepSeek **Flash** models through a local translat
 git clone https://github.com/royalskynet/deepclaude-flash ~/.deepclaude && mkdir -p ~/.local/bin && ln -sf ~/.deepclaude/bin/deepclaude ~/.local/bin/deepclaude
 ```
 
-Needs `claude` (Claude Code CLI), `node` ≥ 18 and `bash`. macOS and Linux.
-需要 `claude`（Claude Code CLI）、`node` ≥ 18、`bash`。支援 macOS 與 Linux。
+Needs `claude` (Claude Code CLI), `node` ≥ 18 and `bash`. macOS and Linux; Windows works from Git Bash.
+需要 `claude`（Claude Code CLI）、`node` ≥ 18、`bash`。支援 macOS 與 Linux；Windows 可在 Git Bash 下執行。
+
+## Set up a key / 設定 API key
+
+Installing asks nothing. The **first time you run `deepclaude` in a terminal** without a key, it asks for one (input hidden) and saves it. Run `deepclaude --setup` any time to pick a backend and change the key.
+安裝時不會問任何東西。**第一次在終端機執行 `deepclaude`** 而還沒有 key 時，會請你貼上 key（輸入不顯示）並存起來。之後隨時可執行 `deepclaude --setup` 換後端或換 key。
+
+```bash
+deepclaude --setup        # menu: 1) ds  2) go  3) fw
+deepclaude --setup ds     # skip the menu
+```
+
+**Recommended: a DeepSeek API key** (`ds`, model `deepseek-v4-flash`). Pay-as-you-go, no subscription, cheapest of the three. Get one at <https://platform.deepseek.com/api_keys>.
+**建議用 DeepSeek 官方 API key**（`ds`，模型 `deepseek-v4-flash`）：用多少付多少、不用訂閱，三者中最便宜。到 <https://platform.deepseek.com/api_keys> 申請。
+
+| Backend | Key | Model | Notes |
+|---|---|---|---|
+| `ds` (recommended) | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` | DeepSeek official, pay-as-you-go |
+| `go` (default if never set up) | `OPENCODE_ZEN_API_KEY` | `deepseek-v4.1-flash` | OpenCode Go subscription |
+| `fw` | `FIREWORKS_API_KEY` | `deepseek-v4-flash` | Fireworks |
+
+Where keys are read from, first match wins: environment variable, then `~/.creds/kv/<VAR>.txt` (one value per file; `--setup` writes here). Keys are never passed on the command line, because other programs can read argv via `ps`.
+key 讀取順序：先看環境變數，再看 `~/.creds/kv/<變數名>.txt`（一檔一值，`--setup` 就是寫這裡）。key 不走命令列參數，因為其他程式能用 `ps` 看到參數。
+
+In scripts or CI (no terminal), nothing is asked: a missing key stops with `ERROR: <VAR> not set (run: deepclaude --setup)`.
+在腳本或 CI（沒有終端機）裡不會詢問；缺 key 時直接停下並顯示 `ERROR: <VAR> not set (run: deepclaude --setup)`。
+
+### Other models / 其他模型
+
+Any model whose endpoint speaks the Anthropic Messages API can drive Claude Code. The hard requirement is reliable tool calling. DeepSeek Flash is the tested default. To try another model on the same backend, set `OPENCODE_GO_MODEL` (for `go`) or `FIREWORKS_MODEL` (for `fw`) and check it on a small task first. Only DeepSeek **Pro** ids are refused (see below).
+只要端點支援 Anthropic Messages API，就能拿來跑 Claude Code，硬條件是工具呼叫要穩。DeepSeek Flash 是實測過的預設。要在同一個後端換模型，設 `OPENCODE_GO_MODEL`（`go`）或 `FIREWORKS_MODEL`（`fw`），先用小任務驗證。只有 DeepSeek **Pro** 會被拒絕（見下節）。
 
 ## Use / 使用
 
 ```bash
-export CHEAPERINFERENCE_API_KEY=...   # default backend / 預設後端
-deepclaude                            # start Claude Code on DeepSeek Flash
-deepclaude -b ds                      # DeepSeek official API (DEEPSEEK_API_KEY)
-deepclaude -b or                      # OpenRouter (OPENROUTER_API_KEY)
-deepclaude -b fw                      # Fireworks (FIREWORKS_API_KEY)
+deepclaude                            # start Claude Code on the default backend
+deepclaude -b ds                      # one-off: DeepSeek official API
+deepclaude -b go                      # one-off: OpenCode Go
 deepclaude --status                   # show backend, keys (masked), models
 ```
 
-Keys can also live in `~/.creds/kv/<VAR>.txt`; the launcher loads them if present.
-API key 也可以放在 `~/.creds/kv/<變數名>.txt`，啟動時會自動讀取。
+`ci` (CheaperInference) was retired on 2026-10-18. `or` (OpenRouter) is disabled in this build: the launcher unsets `OPENROUTER_API_KEY`.
+`ci`（CheaperInference）已於 2026-10-18 退役。`or`（OpenRouter）在此版停用：啟動器會清掉 `OPENROUTER_API_KEY`。
 
 ## Flash-only policy / 只准 Flash
 

@@ -36,6 +36,8 @@ load_cred OPENCODE_ZEN_API_KEY opencode
 # borrowing one.
 unset OPENROUTER_API_KEY
 load_cred OMNIROUTE_DEEPCLAUDE_KEY omniroute
+load_cred DEEPSEEK_API_KEY deepseek
+load_cred FIREWORKS_API_KEY fireworks
 # search_web.py reads these from env; without them /research falls back to ddg/mojeek.
 load_cred BRAVE_SEARCH_API_KEY brave
 load_cred FIRECRAWL_API_KEY firecrawl
@@ -73,7 +75,47 @@ loc="$DC_HOME/work/.claude/settings.local.json"; seed="$DC_HOME/config/settings.
 export CLAUDE_CONFIG_DIR="$CFG"
 # Default backend: go = OpenCode Go (ci retired 2026-10-18). Main loop and subagents both
 # deepseek-v4.1-flash (Flash only, Pro is refused) (see repo/deepclaude.sh). Override: `deepclaude -b omni` or env.
+[[ -z "${CHEAPCLAUDE_DEFAULT_BACKEND:-}" && -s "$CFG/default-backend" ]] && CHEAPCLAUDE_DEFAULT_BACKEND="$(<"$CFG/default-backend")"
 export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-go}"
+
+# `deepclaude --setup`, or the first interactive launch with no key for the chosen backend:
+# ask for one key and store it where load_cred reads it (~/.creds/kv/<VAR>.txt, mode 600).
+# Read from stdin, never argv: argv shows up in `ps`.
+backend_var() {
+    case "$1" in
+        ds|deepseek) echo DEEPSEEK_API_KEY ;;
+        go|opencode-go) echo OPENCODE_ZEN_API_KEY ;;
+        fw|fireworks) echo FIREWORKS_API_KEY ;;
+    esac
+}
+dc_setup() {
+    local b="${1:-}" c v k
+    if [[ -z "$b" ]]; then
+        echo "deepclaude setup: pick a backend"
+        echo "  1) ds  DeepSeek official API, deepseek-v4-flash (recommended)  https://platform.deepseek.com/api_keys"
+        echo "  2) go  OpenCode Go subscription, deepseek-v4.1-flash          https://opencode.ai"
+        echo "  3) fw  Fireworks, deepseek-v4-flash                           https://fireworks.ai"
+        read -rp "Choice [1]: " c || return 1
+        case "${c:-1}" in 1|ds) b=ds ;; 2|go) b=go ;; 3|fw) b=fw ;; *) echo "deepclaude: unknown choice '$c'" >&2; return 1 ;; esac
+    fi
+    v="$(backend_var "$b")"
+    [[ -n "$v" ]] || { echo "deepclaude: --setup supports ds/go/fw, got '$b'" >&2; return 1; }
+    read -rsp "Paste $v (input hidden): " k || return 1; echo
+    [[ -n "$k" ]] || { echo "deepclaude: empty key, nothing saved" >&2; return 1; }
+    mkdir -p "$HOME/.creds/kv"
+    ( umask 077; printf '%s' "$k" > "$HOME/.creds/kv/$v.txt" )
+    printf '%s\n' "$b" > "$CFG/default-backend"
+    export "$v=$k" CHEAPCLAUDE_DEFAULT_BACKEND="$b"
+    echo "  saved ~/.creds/kv/$v.txt; default backend = $b (rerun: deepclaude --setup)"
+}
+if [[ "${1:-}" == "--setup" ]]; then dc_setup "${2:-}"; exit $?; fi
+_b="$CHEAPCLAUDE_DEFAULT_BACKEND"; _prev=""
+for _a in "$@"; do [[ "$_prev" == "-b" || "$_prev" == "--backend" ]] && _b="$_a"; _prev="$_a"; done
+_v="$(backend_var "$_b")"
+if [[ -n "$_v" && -z "${!_v:-}" && -t 0 && -t 1 ]]; then
+    echo "deepclaude: no $_v yet, running setup once"
+    dc_setup "$_b" || exit 1
+fi
 
 unset ANTHROPIC_API_KEY
 exec "$DC_HOME/repo/deepclaude.sh" "$@"

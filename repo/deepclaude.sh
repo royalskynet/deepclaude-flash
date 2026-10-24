@@ -86,7 +86,7 @@ resolve_backend() {
     case "$BACKEND" in
         ds|deepseek)
             key="${DEEPSEEK_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: DEEPSEEK_API_KEY not set" >&2; exit 1; }
+            [[ -z "$key" ]] && { echo "ERROR: DEEPSEEK_API_KEY not set (run: deepclaude --setup)" >&2; exit 1; }
             url="$DEEPSEEK_URL"
             opus="deepseek-v4-flash"; sonnet="deepseek-v4-flash"
             haiku="deepseek-v4-flash"; subagent="deepseek-v4-flash"
@@ -100,14 +100,14 @@ resolve_backend() {
             ;;
         fw|fireworks)
             key="${FIREWORKS_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: FIREWORKS_API_KEY not set" >&2; exit 1; }
+            [[ -z "$key" ]] && { echo "ERROR: FIREWORKS_API_KEY not set (run: deepclaude --setup)" >&2; exit 1; }
             url="$FIREWORKS_URL"
             opus="${FIREWORKS_MODEL:-accounts/fireworks/models/deepseek-v4-flash}"
             sonnet="$opus"; haiku="$opus"; subagent="$opus"
             ;;
         go|opencode-go)
             key="${OPENCODE_ZEN_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: OPENCODE_ZEN_API_KEY not set" >&2; exit 1; }
+            [[ -z "$key" ]] && { echo "ERROR: OPENCODE_ZEN_API_KEY not set (run: deepclaude --setup)" >&2; exit 1; }
             url="${OPENCODE_GO_URL:-$GO_DEFAULT_URL}"
             opus="$GO_MODEL"; sonnet="$GO_MODEL"; haiku="$GO_MODEL"; subagent="$GO_MODEL"
             ;;
@@ -197,7 +197,9 @@ show_status() {
     echo "    CLAUDE_CONFIG_DIR:   ${CLAUDE_CONFIG_DIR:-<default ~/.claude>}"
     echo ""
     echo "  Backends:"
-    echo "    deepclaude                  # CheaperInference (default): DeepSeek V4 Flash, main + subagents"
+    echo "    deepclaude                  # default backend: $BACKEND (set with: deepclaude --setup)"
+    echo "    deepclaude -b ds            # DeepSeek official API: deepseek-v4-flash"
+    echo "    deepclaude -b go            # OpenCode Go subscription: deepseek-v4.1-flash"
     echo "    deepclaude -b omni          # OmniRoute free combo (via resident proxy)"
     echo "    deepclaude -b or            # OpenRouter (cheapest)"
     echo "    deepclaude -b fw            # Fireworks AI (fastest)"
@@ -262,6 +264,7 @@ show_help() {
     echo "  -b, --backend <go|omni|ds|or|fw|anthropic>  Backend (default: go)"
     echo "  -r, --remote                        Remote control mode (browser URL)"
     echo "  --happy                              Launch happy against the resident proxy"
+    echo "  --setup [ds|go|fw]                   Save a backend key and make it the default"
     echo "  --status                             Show keys and backends"
     echo "  --cost                               Pricing comparison"
     echo "  --benchmark                          Latency test"
