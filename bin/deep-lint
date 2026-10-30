@@ -5,6 +5,10 @@
 #   wo-verify --dry only checks the 驗收 block parses; this is the prose-side gate.
 # exit 0 = OK (or warn-only), 1 = no runnable 驗收 block.
 set -u
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
+  exit 0
+fi
 wo="${1:?用法: deep-lint <task.md>}"
 [ -f "$wo" ] || { echo "deep-lint: 檔案不存在 $wo"; exit 1; }
 # deep-lint is reached through a ~/.local/bin symlink; resolve it so the vendored
@@ -83,6 +87,13 @@ if "$WV" "$wo" --dump 2>/dev/null | grep -qE '^[[:space:]]*![[:space:]]'; then
   warn=1
 fi
 
+# 綁死 HEAD 閘門（fix 11496）：重驗在完工後才跑，那時常已再 commit，git log -1／show HEAD／HEAD~ 會誤判失敗。
+# 與 delegate-guard hooks/ledger.mjs fakeAcceptance 同一條規則；這裡涵蓋不經 Claude hook 的派工。
+if "$WV" "$wo" --dump 2>/dev/null | grep -qE 'git[[:space:]].*(log([[:space:]]+[^|;&]*)?[[:space:]]-(1|n[[:space:]]*1)([^0-9]|$)|show([[:space:]]+[^|;&]*)?[[:space:]]HEAD([^~^]|$)|HEAD~)'; then
+  echo "LINT WARN: 驗收綁死最新一筆 commit（git log -1／git show HEAD／HEAD~）——完工後再有 commit 就會誤判（fix 11496）。改查檔案內容，或 git log --format=%s -20 | grep"
+  warn=1
+fi
+
 # 探針閘門：工單若描述 API 請求形狀（URL 含 vN / POST / 請求形狀 / wire shape）卻無
 # 探針證據（探針： 行或 http=NNN），警告先跑 api-probe 貼 4xx 錯誤體（fix 9356）。
 # 形狀是 zod 錯誤體不是 struct 欄位名；硬要寫形狀就必須有實打過的證據。
@@ -103,7 +114,7 @@ fi
 dump=$("$WV" "$wo" --dump 2>/dev/null)
 if printf '%s' "$dump" | grep -q 'git status --porcelain' \
    && ! grep -Eq 'TMPDIR|mktemp|scratch|草稿' "$wo"; then
-  echo 'LINT WARN: 驗收有 clean-tree 斷言但工單沒寫 scratch 放哪——「## 不動」段明寫 scratch 放 $TMPDIR，不進 repo（fix 9620）'
+  echo 'LINT WARN: 驗收有 clean-tree 斷言但工單沒寫 scratch 放哪——「## 不動」段明寫 scratch 放 ${TMPDIR}，不進 repo（fix 9620）'
   warn=1
 fi
 
