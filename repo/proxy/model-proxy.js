@@ -156,16 +156,28 @@ function shellUnits(cmd) {
     return n;
 }
 
-/**
- * A user turn that starts a new task, as opposed to a tool_result carrier. The
- * Anthropic wire format sends tool results as role:user, so "the last user
- * message" is almost always a tool_result and useless as a task boundary.
- */
-function isTaskStart(m) {
-    if (m?.role !== 'user') return false;
-    if (typeof m.content === 'string') return true;
-    const content = Array.isArray(m.content) ? m.content : [];
-    return !content.some((b) => b?.type === 'tool_result');
+// Compact turns the old rounds into a summary, so loopStats sees them vanish and
+// the 90-round hard stop would move back forever. Remember per session how many
+// rounds were already counted and add the post-compact tail on top.
+// ponytail: summary turns are not counted; upgrade path if compaction itself ever
+// needs a round is to bump offset by one at the shrink instead of just setting it.
+const roundState = new Map();
+const ROUND_STATE_MAX = 500;
+export function effectiveRounds(state, rounds) {
+    if (rounds < state.last - state.offset) state.offset = state.last;
+    const eff = state.offset + rounds;
+    state.last = Math.max(state.last, eff);
+    return eff;
+}
+function sessionRounds(sid, rounds) {
+    if (!sid) return rounds;
+    let st = roundState.get(sid);
+    if (!st) {
+        st = { last: 0, offset: 0 };
+        roundState.set(sid, st);
+        if (roundState.size > ROUND_STATE_MAX) roundState.delete(roundState.keys().next().value);
+    }
+    return effectiveRounds(st, rounds);
 }
 
 /**
@@ -175,17 +187,16 @@ function isTaskStart(m) {
  * `narrationPrev` is narration up to but excluding the last assistant turn, which
  * is what lets G2 fire once per band crossing without remembering anything.
  *
- * Counting restarts at every task-start user turn. The thresholds were calibrated
- * on deep-run sessions, where one session = one task; an interactive session is
- * one conversation holding many tasks, so a conversation-lifetime `rounds` crossed
- * the hard stop once and then forced a "NOT DONE" report every 15 rounds for the
- * rest of the session (M2, 2026-11-01/02: 39 hard stops, rounds up to 165).
+ * `rounds` is conversation-lifetime on purpose: the hard stop is calibrated on
+ * deep-run, where one session = one task, and only deep-run keeps it on
+ * (DC_GUARD_HARD). Do not reset at text-only user turns — hook reminders, task
+ * notifications and stop-gate feedback arrive that way mid-task and would hand a
+ * headless run a fresh 90-round budget (codex audit 2026-11-02).
  */
 function loopStats(messages) {
-    let perTurn = [];
-    let perTurnNarration = [];
+    const perTurn = [];
+    const perTurnNarration = [];
     for (const m of messages || []) {
-        if (isTaskStart(m)) { perTurn = []; perTurnNarration = []; continue; }
         if (m?.role !== 'assistant') continue;
         const content = Array.isArray(m.content) ? m.content : [];
         let units = 0, narr = 0;
@@ -716,6 +727,9 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             }
                             if (!isSubagent && LOOP_GUARD) {
                                 const stats = loopStats(parsed.messages);
+                                if (GUARD_HARD) {
+                                    stats.rounds = sessionRounds(clientReq.headers['x-claude-code-session-id'], stats.rounds);
+                                }
                                 const nudges = loopNudges(stats);
                                 if (nudges.length) {
                                     // role:"system" mid-conversation is what Claude Code

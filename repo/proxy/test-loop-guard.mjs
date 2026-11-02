@@ -15,6 +15,7 @@ process.env.DC_MODEL = MAIN;
 process.env.DC_SUBAGENT_MODEL = '';          // single-model: deep-run has no Agent tool
 process.env.DC_MAIN_HARNESS_FILE = harnessFile;
 process.env.DC_LOOP_GUARD = 'on';
+process.env.DC_GUARD_HARD = 'on';             // pinned: an inherited off would flip checks 11/12
 process.env.DC_GUARD_SINGLES = '3';
 process.env.DC_GUARD_NARRATION = '100';   // production default is 4 / 3000 / 15
 process.env.DC_GUARD_ROUNDS = '15';
@@ -145,15 +146,14 @@ await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(90, 2) }
 assert.ok(nudge(seen[15]).includes('已經 90 輪') && nudge(seen[15]).includes('NOT DONE') && !nudge(seen[15]).includes('二選一'),
     'round 90 forces the final report');
 
-// 12. A new user task resets the counters. Without this, `rounds` was a
-//     conversation-lifetime counter: an interactive session that once crossed 90
-//     got the forced "NOT DONE" report every 15 rounds for the rest of its life
-//     (M2 2026-11-01/02: 39 hard stops, rounds up to 165).
+// 12. A text-only user turn mid-run (hook reminder, task notification, stop-gate
+//     feedback) must not reset the hard-stop budget — interactive sessions avoid
+//     the lifetime count via DC_GUARD_HARD=off instead (codex audit 2026-11-02).
 await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(85, 2).concat(convo(5, 2)) });
-assert.strictEqual(nudge(seen[16]), '', '85 rounds of an older task must not count toward the new task');
-//     …and the hard stop still fires when one task really does run 90 rounds.
-await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(30, 2).concat(convo(90, 2)) });
-assert.ok(nudge(seen[17]).includes('已經 90 輪'), 'a task of its own 90 rounds must still be hard-stopped');
+assert.ok(nudge(seen[16]).includes('已經 90 輪'), 'a text-only user turn must not reset rounds');
+await post({ model: MAIN, max_tokens: 100, system: 'S',
+    messages: convo(88, 2).concat([{ role: 'user', content: [{ type: 'text', text: '<system-reminder>\nhook\n</system-reminder>' }] }], convo(2, 2).slice(1)) });
+assert.ok(nudge(seen[17]).includes('已經 90 輪'), 'a reminder-only user turn must not reset rounds');
 
 console.log('OK: 18/18 loop-guard checks passed');
 process.exit(0);

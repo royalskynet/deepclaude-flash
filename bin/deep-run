@@ -41,6 +41,7 @@ export DC_MAIN_HARNESS_FILE="${DC_MAIN_HARNESS_FILE:-$DC_HOME/config/deep-harnes
 export DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}"
 # Hard stop (90 rounds) is for unattended runs only; interactive launchers default it off.
 export DC_GUARD_HARD="${DC_GUARD_HARD:-on}"
+case "$DC_GUARD_HARD" in on|off) ;; *) echo "deep-run: DC_GUARD_HARD must be on|off, got: $DC_GUARD_HARD" >&2; exit 2 ;; esac
 
 # Sandbox guard: the allowlist entry is the literal string "deep-run *", so calling
 # this by absolute path silently drops back into the sandbox (node DNS dies at once
