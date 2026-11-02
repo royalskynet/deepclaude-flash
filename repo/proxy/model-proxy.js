@@ -122,6 +122,9 @@ const GUARD_SINGLES = Number(process.env.DC_GUARD_SINGLES) || 4;
 const GUARD_NARRATION = Number(process.env.DC_GUARD_NARRATION) || 3000;
 const GUARD_ROUNDS = Number(process.env.DC_GUARD_ROUNDS) || 15;
 const GUARD_HARD_NTH = Number(process.env.DC_GUARD_HARD_NTH) || 6;
+// Hard stop is for unattended runs (deep-run sets on); interactive launchers set off —
+// a human is there to stop it, and the forced NOT DONE report only killed live tasks.
+const GUARD_HARD = process.env.DC_GUARD_HARD !== 'off';
 
 /**
  * Top-level command count in a shell string: ; && || and bare newlines separate
@@ -154,16 +157,35 @@ function shellUnits(cmd) {
 }
 
 /**
+ * A user turn that starts a new task, as opposed to a tool_result carrier. The
+ * Anthropic wire format sends tool results as role:user, so "the last user
+ * message" is almost always a tool_result and useless as a task boundary.
+ */
+function isTaskStart(m) {
+    if (m?.role !== 'user') return false;
+    if (typeof m.content === 'string') return true;
+    const content = Array.isArray(m.content) ? m.content : [];
+    return !content.some((b) => b?.type === 'tool_result');
+}
+
+/**
  * Loop diagnostics derived from the request body alone — no session state, so a
  * restarted proxy or a resumed conversation still measures correctly.
  * `singles` counts the trailing run of assistant turns worth one shell unit.
  * `narrationPrev` is narration up to but excluding the last assistant turn, which
  * is what lets G2 fire once per band crossing without remembering anything.
+ *
+ * Counting restarts at every task-start user turn. The thresholds were calibrated
+ * on deep-run sessions, where one session = one task; an interactive session is
+ * one conversation holding many tasks, so a conversation-lifetime `rounds` crossed
+ * the hard stop once and then forced a "NOT DONE" report every 15 rounds for the
+ * rest of the session (M2, 2026-11-01/02: 39 hard stops, rounds up to 165).
  */
 function loopStats(messages) {
-    const perTurn = [];
-    const perTurnNarration = [];
+    let perTurn = [];
+    let perTurnNarration = [];
     for (const m of messages || []) {
+        if (isTaskStart(m)) { perTurn = []; perTurnNarration = []; continue; }
         if (m?.role !== 'assistant') continue;
         const content = Array.isArray(m.content) ? m.content : [];
         let units = 0, narr = 0;
@@ -202,7 +224,7 @@ function loopNudges({ rounds, singles, narration, narrationPrev }) {
     }
     // Hard stop only. D1 10-23 (n=8/arm): soft nudges every 15 rounds bought no acceptance
     // (on 7/8 = off 7/8) and cost +27% rounds; off-arm legit serial work finished by 75.
-    if (rounds >= GUARD_ROUNDS * GUARD_HARD_NTH && rounds % GUARD_ROUNDS === 0) {
+    if (GUARD_HARD && rounds >= GUARD_ROUNDS * GUARD_HARD_NTH && rounds % GUARD_ROUNDS === 0) {
         out.push(`已經 ${rounds} 輪。沒有選項了：這一輪就輸出最終報告，已完成的寫進去、其餘全部列 NOT DONE 並附原始錯誤。不准再開任何新的探索、不准再讀新檔案。`);
     }
     return out;

@@ -53,6 +53,9 @@ else
 fi
 # Same default as the per-session proxy (repo/deepclaude.sh launch_claude).
 export DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}"
+# A human is at the keyboard (happy): no forced NOT DONE report; context growth is
+# handled by the jev-gate compact cascade (200k), goals by /goal.
+export DC_GUARD_HARD="${DC_GUARD_HARD:-off}"
 # Classifier short-circuit toggle for the resident proxy. off=forward classifier
 # upstream (old abort-prone behavior); allow=answer <block>no</block> inline so
 # Claude Code's auto-mode security-classifier never hits the cheap/agnese backend

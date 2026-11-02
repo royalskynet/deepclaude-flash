@@ -39,6 +39,8 @@ export OPENROUTER_MODEL="${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash-0731}"
 export CHEAPCLAUDE_DEFAULT_BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-go}"
 export DC_MAIN_HARNESS_FILE="${DC_MAIN_HARNESS_FILE:-$DC_HOME/config/deep-harness.md}"
 export DC_LOOP_GUARD="${DC_LOOP_GUARD:-on}"
+# Hard stop (90 rounds) is for unattended runs only; interactive launchers default it off.
+export DC_GUARD_HARD="${DC_GUARD_HARD:-on}"
 
 # Sandbox guard: the allowlist entry is the literal string "deep-run *", so calling
 # this by absolute path silently drops back into the sandbox (node DNS dies at once
@@ -101,7 +103,7 @@ if [ "${DEEP_NO_TMUX:-0}" = 1 ]; then
 else
   # tmux env does not inherit the caller's exports — hand them over explicitly.
   envstr="env PATH='$PATH' OPENCODE_GO_MODEL='$OPENCODE_GO_MODEL'"
-  envstr="$envstr DC_MAIN_HARNESS_FILE='$DC_MAIN_HARNESS_FILE' DC_LOOP_GUARD='$DC_LOOP_GUARD'"
+  envstr="$envstr DC_MAIN_HARNESS_FILE='$DC_MAIN_HARNESS_FILE' DC_LOOP_GUARD='$DC_LOOP_GUARD' DC_GUARD_HARD='$DC_GUARD_HARD'"
   envstr="$envstr DEEP_TASK_FILE='$DEEP_TASK_FILE' DC_HOME='$DC_HOME' WLOG='$WLOG'"
   envstr="$envstr CREDS_DIR='$CREDS_DIR'"
   envstr="$envstr CHEAPCLAUDE_DEFAULT_BACKEND='$CHEAPCLAUDE_DEFAULT_BACKEND' OPENROUTER_MODEL='$OPENROUTER_MODEL'"  # deep-or

@@ -145,5 +145,15 @@ await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(90, 2) }
 assert.ok(nudge(seen[15]).includes('已經 90 輪') && nudge(seen[15]).includes('NOT DONE') && !nudge(seen[15]).includes('二選一'),
     'round 90 forces the final report');
 
-console.log('OK: 16/16 loop-guard checks passed');
+// 12. A new user task resets the counters. Without this, `rounds` was a
+//     conversation-lifetime counter: an interactive session that once crossed 90
+//     got the forced "NOT DONE" report every 15 rounds for the rest of its life
+//     (M2 2026-11-01/02: 39 hard stops, rounds up to 165).
+await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(85, 2).concat(convo(5, 2)) });
+assert.strictEqual(nudge(seen[16]), '', '85 rounds of an older task must not count toward the new task');
+//     …and the hard stop still fires when one task really does run 90 rounds.
+await post({ model: MAIN, max_tokens: 100, system: 'S', messages: convo(30, 2).concat(convo(90, 2)) });
+assert.ok(nudge(seen[17]).includes('已經 90 輪'), 'a task of its own 90 rounds must still be hard-stopped');
+
+console.log('OK: 18/18 loop-guard checks passed');
 process.exit(0);
