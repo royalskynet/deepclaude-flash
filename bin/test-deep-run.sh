@@ -138,5 +138,18 @@ g2=$(echo '{"session_id":"t1","stop_hook_active":false}' | DEEP_TASK_FILE="$tmp/
 check "Stop gate blocks failing 驗收 once, then silent" \
   '[ -n "$(grep -E "\"decision\": *\"block\"" <<< "$g1")" ] && [ -z "$g2" ]'
 
-[ "$fail" = 0 ] && echo "OK: 18/18 deep-run invocation checks passed"
+# R9: cwd 帶 .git/deep-live 標記（現役服務 working tree）→ exit 4、不跑模型、提示 worktree；
+# 同 repo 的 worktree（.git 是檔案）照常放行。
+live="$tmp/live"; git init -q "$live" && git -C "$live" commit -q --allow-empty -m init && touch "$live/.git/deep-live"
+rm -f "$tmp/argvl"
+lout=$(HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wl.log" HTTPS_PROXY="" STUB_ARGV="$tmp/argvl" STUB_ENV="$tmp/envl" \
+  DEEP_NO_TMUX=1 "$HERE/deep-run" "$tmp/task.md" "$live" 2>&1); lrc=$?
+check "live working tree ⇒ exit 4, model not run, worktree hint" \
+  '[ "$lrc" = 4 ] && [ ! -e "$tmp/argvl" ] && grep -q "worktree add" <<< "$lout"'
+git -C "$live" worktree add -q "$tmp/livewt" -b wt 2>/dev/null
+HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wl2.log" HTTPS_PROXY="" STUB_ARGV="$tmp/argvw" STUB_ENV="$tmp/envw" \
+  DEEP_NO_TMUX=1 "$HERE/deep-run" "$tmp/task.md" "$tmp/livewt" >/dev/null 2>&1
+check "worktree of a live repo is allowed" '[ -s "$tmp/argvw" ]'
+
+[ "$fail" = 0 ] && echo "OK: 20/20 deep-run invocation checks passed"
 exit "$fail"

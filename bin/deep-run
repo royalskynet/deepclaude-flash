@@ -57,6 +57,16 @@ WLOG="${WLOG:-$HOME/Library/Logs/openclaw/wrappers.log}"
 case "$f" in /*) ;; *) echo "deep-run: task path must be absolute: $f" >&2; exit 2 ;; esac
 [ -f "$f" ] || { echo "deep-run: task file not found: $f" >&2; exit 2; }
 [ -d "$d" ] || { echo "deep-run: cwd not found: $d" >&2; exit 2; }
+# R9: 現役服務直接跑 working tree 的程式（例：bot 的 bin/），deep 改到一半就是線上半成品
+# （2026-11-04 Mythos ledger 鎖改壞，派工全停）。repo 在 .git/deep-live 放標記（不進版控），
+# deep-run 就拒絕直接在那裡跑；worktree 的 .git 是檔案，不帶標記，所以 worktree 照常放行。
+if [ -f "$d/.git/deep-live" ]; then
+    b="deep-$(date +%m%d%H%M)"
+    echo "deep-run: $d 是現役服務的 working tree，不准直接改。改在 worktree 跑，驗收過再 ff 合回：" >&2
+    echo "  git -C $d worktree add ${TMPDIR:-/tmp}/$b -b $b && deep-run <task.md> ${TMPDIR:-/tmp}/$b" >&2
+    echo "  git -C $d merge --ff-only $b && git -C $d worktree remove ${TMPDIR:-/tmp}/$b" >&2
+    exit 4
+fi
 
 # GH_TOKEN is resolved inside deep-run-inner (kv file, else `gh auth token`), never
 # here: anything put in the tmux command string below shows up verbatim in `ps`.

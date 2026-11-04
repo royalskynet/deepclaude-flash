@@ -82,9 +82,10 @@ fi
 
 # 否定斷言閘門：`! cmd` 在 set -e 下被明確豁免（bash 手冊：return value
 # inverted with !），永遠不會讓驗收失敗——2026-09-24 實證假過。
+# 2026-11-04 由 WARN 升 FAIL：沒有任何情況是對的，警告擋不住 dc 派工。
 if "$WV" "$wo" --dump 2>/dev/null | grep -qE '^[[:space:]]*![[:space:]]'; then
-  echo "LINT WARN: 驗收區塊有 \`! cmd\` 否定斷言——set -e 豁免反轉退出碼，這行永遠不會失敗。改寫成 test -z \"\$(...)\" 或 if cmd; then exit 1; fi"
-  warn=1
+  echo "LINT FAIL: 驗收區塊有 \`! cmd\` 否定斷言——set -e 豁免反轉退出碼，這行永遠不會失敗。改寫成 test -z \"\$(...)\" 或 if cmd; then exit 1; fi"
+  fail_bang=1
 fi
 
 # 綁死 HEAD 閘門（fix 11496）：重驗在完工後才跑，那時常已再 commit，git log -1／show HEAD／HEAD~ 會誤判失敗。
@@ -171,5 +172,6 @@ if printf '%s\n' "$dump" | grep -q 'date -u'; then
 fi
 
 [ "${fail_block:-0}" = 1 ] && { echo "LINT FAIL: no runnable 驗收 block"; exit 1; }
+[ "${fail_bang:-0}" = 1 ] && exit 1
 [ "$warn" -eq 0 ] && echo "LINT OK"
 exit 0
