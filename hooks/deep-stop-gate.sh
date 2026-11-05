@@ -2,9 +2,9 @@
 # deep-stop-gate.sh - Stop hook for deep-run headless sessions.
 # Reads the Stop hook JSON from stdin. In an interactive session it passes through
 # silently (exit 0, no output) so the machine a human is typing at is unaffected.
-# For a deep-run session whose 驗收 still fails, it blocks the FIRST Stop — write the
-# block decision to stdout so Claude Code records a block — and never blocks the
-# same session again (marker file). Every call appends a line to gate.log.
+# For a deep-run session whose 驗收 still fails, it blocks the Stop up to
+# DEEP_GATE_MAX_BLOCKS times (default 3, counter file per session), then lets it end.
+# Every call appends a line to gate.log.
 set -u
 
 DC_HOME="${DC_HOME:-$HOME/.deepclaude}"
@@ -16,9 +16,15 @@ LOG="$GATE_DIR/gate.log"
 payload=$(cat)
 stop_hook_active=$(printf '%s' "$payload" | jq -r '.stop_hook_active // false')
 session_id=$(printf '%s' "$payload" | jq -r '.session_id // "unknown"')
+SAFE_ID=$(printf '%s' "$session_id" | tr -cd 'A-Za-z0-9_-')
+[ -n "$SAFE_ID" ] || SAFE_ID="unknown"
+COUNT_FILE="$GATE_DIR/$SAFE_ID.blocks"
+MAX_BLOCKS="${DEEP_GATE_MAX_BLOCKS:-3}"
 
-# Interactive session (no deployment gate) — nothing to enforce, no output, no log.
-if [ "$stop_hook_active" = "true" ]; then
+# stop_hook_active=true means "continuing after a stop-hook block" (official docs), not
+# "interactive". Only pass through when the block was someone else's, so our own
+# retries up to MAX_BLOCKS still get re-verified.
+if [ "$stop_hook_active" = "true" ] && [ ! -f "$COUNT_FILE" ]; then
     exit 0
 fi
 
@@ -41,14 +47,10 @@ if [ -z "${DEEP_TASK_FILE:-}" ]; then
     exit 0
 fi
 
-# One block per session: marker is keyed on the session_id, with everything outside
-# [A-Za-z0-9_-] removed so it is a safe filename.
-SAFE_ID=$(printf '%s' "$session_id" | tr -cd 'A-Za-z0-9_-')
-[ -n "$SAFE_ID" ] || SAFE_ID="unknown"
-MARKER="$GATE_DIR/$SAFE_ID.blocked"
-
-if [ -f "$MARKER" ]; then
-    echo "$(date '+%F %T') $SAFE_ID skip" >> "$LOG"
+n=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+case "$n" in ''|*[!0-9]*) n=0 ;; esac
+if [ "$n" -ge "$MAX_BLOCKS" ]; then
+    echo "$(date '+%F %T') $SAFE_ID skip:cap" >> "$LOG"
     exit 0
 fi
 
@@ -60,9 +62,9 @@ if [ "$vrc" = 0 ] || [ "$vrc" = 2 ]; then
     exit 0
 fi
 
-# 驗收 not passing yet — block this Stop, once per session.
-touch "$MARKER"
-reason="驗收未通過（wo-verify rc=${vrc}）。原始輸出最後 30 行：$(tail -30 /tmp/deep-gate-verify.$$ | tr '\n' ' ')。修被驗物後再結束；禁改驗收指令、樣本、任務檔。"
+n=$((n + 1))
+printf '%s' "$n" > "$COUNT_FILE"
+reason="驗收未通過（wo-verify rc=${vrc}，第 ${n}/${MAX_BLOCKS} 次攔截）。原始輸出最後 30 行：$(tail -30 /tmp/deep-gate-verify.$$ | tr '\n' ' ')。修被驗物後再結束；禁改驗收指令、樣本、任務檔。"
 jq -n --arg reason "$reason" '{decision:"block", reason:$reason}'
 echo "$(date '+%F %T') $SAFE_ID block" >> "$LOG"
 exit 0

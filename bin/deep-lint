@@ -67,6 +67,13 @@ tasks=$(awk '
   in_task && /^###[[:space:]]/ { count++ }
   END { print count ? count : 1 }
 ' "$wo")
+# 一張單 ≤3 個 ### 子任務：10-23～11-05 派deep 48 張，### ≥3 失敗 14/19、≤2 失敗 11/29。
+h3=$(awk '/^```/ { f = !f; next } !f && /^###[[:space:]]/ { c++ } END { print c + 0 }' "$wo")
+if [ "$h3" -gt 3 ]; then
+  echo "LINT WARN: $h3 個 ### 子任務（> 3）——拆成多張單，每張 ≤3 項，依序派、前一張 verify=pass 才派下一張"
+  warn=1
+fi
+
 limit=$((40 + (tasks - 1) * 20))
 if [ "$n" -gt "$limit" ]; then
   echo "LINT WARN: $n lines (> $limit; tasks=$tasks, formula=40+20*(tasks-1))"

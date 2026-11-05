@@ -127,16 +127,17 @@ tmux_args="$(cat "$tmp/tmux.argv" 2>/dev/null)"
 check "tmux detach uses private -L deep socket + new-session" \
   'grep -q -- "-L" <<< "$tmux_args" && grep -q -- "deep" <<< "$tmux_args" && grep -q "new-session" <<< "$tmux_args"'
 
-# R3 (b): the Stop gate blocks a live deep-run session whose 驗收 still fails, once
-# per session — first call emits a block decision, second call for the same session
-# is silent.
+# R3 (b): the Stop gate blocks a live deep-run session whose 驗收 still fails up to
+# DEEP_GATE_MAX_BLOCKS times per session, then is silent.
 GATE="$HERE/../hooks/deep-stop-gate.sh"
-g1=$(echo '{"session_id":"t1","stop_hook_active":false}' | DEEP_TASK_FILE="$tmp/fail.md" DC_HOME="$tmp/home/.deepclaude" \
+g1=$(echo '{"session_id":"t1","stop_hook_active":false}' | DEEP_GATE_MAX_BLOCKS=2 DEEP_TASK_FILE="$tmp/fail.md" DC_HOME="$tmp/home/.deepclaude" \
       "$GATE" 2>&1)
-g2=$(echo '{"session_id":"t1","stop_hook_active":false}' | DEEP_TASK_FILE="$tmp/fail.md" DC_HOME="$tmp/home/.deepclaude" \
+g2=$(echo '{"session_id":"t1","stop_hook_active":true}' | DEEP_GATE_MAX_BLOCKS=2 DEEP_TASK_FILE="$tmp/fail.md" DC_HOME="$tmp/home/.deepclaude" \
       "$GATE" 2>&1)
-check "Stop gate blocks failing 驗收 once, then silent" \
-  '[ -n "$(grep -E "\"decision\": *\"block\"" <<< "$g1")" ] && [ -z "$g2" ]'
+g3=$(echo '{"session_id":"t1","stop_hook_active":true}' | DEEP_GATE_MAX_BLOCKS=2 DEEP_TASK_FILE="$tmp/fail.md" DC_HOME="$tmp/home/.deepclaude" \
+      "$GATE" 2>&1)
+check "Stop gate blocks failing 驗收 up to cap, then silent" \
+  '[ -n "$(grep -E "\"decision\": *\"block\"" <<< "$g1")" ] && [ -n "$(grep -E "\"decision\": *\"block\"" <<< "$g2")" ] && [ -z "$g3" ]'
 
 # R9: cwd 帶 .git/deep-live 標記（現役服務 working tree）→ exit 4、不跑模型、提示 worktree；
 # 同 repo 的 worktree（.git 是檔案）照常放行。

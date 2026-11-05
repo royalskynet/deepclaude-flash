@@ -57,4 +57,26 @@ else
   echo "FAIL: 無 by-cwd 對應未記 skip:no-task-file — log尾: $(tail -1 "$LOG")"; rc=1
 fi
 
+# Case 3: same session keeps failing -> blocks 2 and 3 (stop_hook_active=true), 4th passes on cap.
+for i in 2 3; do
+  o=$(printf '{"session_id":"t1","cwd":"%s","stop_hook_active":true}' "$cwd" \
+    | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+  case "$o" in
+    *block*"${i}/3"*) echo "ok: 第 $i 次續跑仍 block" ;;
+    *) echo "FAIL: 第 $i 次續跑未 block — $o"; rc=1 ;;
+  esac
+done
+o4=$(printf '{"session_id":"t1","cwd":"%s","stop_hook_active":true}' "$cwd" \
+  | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+if [ -z "$o4" ] && tail -1 "$LOG" | grep -q 'skip:cap'; then
+  echo "ok: 達上限→放行並記 skip:cap"
+else
+  echo "FAIL: 達上限未放行 — out=$o4 log尾: $(tail -1 "$LOG")"; rc=1
+fi
+
+# Case 4: stop_hook_active=true but we never blocked this session -> silent pass.
+o5=$(printf '{"session_id":"t9","cwd":"%s","stop_hook_active":true}' "$cwd" \
+  | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+[ -z "$o5" ] && echo "ok: 別人的 block 續跑→不介入" || { echo "FAIL: 別人的續跑被介入 — $o5"; rc=1; }
+
 exit "$rc"
