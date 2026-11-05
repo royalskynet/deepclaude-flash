@@ -57,6 +57,7 @@ function isClassifierRequest(parsed) {
     return false;
 }
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request
+const DNS_RETRIES = Number(process.env.DC_DNS_RETRIES ?? 3);
 const THINKING_MODE = process.env.DC_THINKING || 'disabled'; // disabled|adaptive|enabled|passthrough
 // Forces every inbound model id onto one backend model, regardless of what the
 // client sent — needed for happy, which sends its own hardcoded model id and
@@ -829,6 +830,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 };
 
                 const reqFn = dest.protocol === 'http:' ? httpRequest : httpsRequest;
+                const send = (attempt) => {
                 const proxyReq = reqFn(opts, (proxyRes) => {
                     if (isModelCall) {
                         const ttfb = Date.now() - t0;
@@ -903,6 +905,14 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 proxyReq.on('error', (err) => {
                     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
                     console.error(`[MODEL-PROXY] #${reqId} ERROR after ${elapsed}s: ${err.message}`);
+                    // Transient DNS blips (wifi switch, wake from sleep) resolve in seconds:
+                    // retry in-proxy before failing the turn (1s, 2s, 4s; ~7s total).
+                    if (['ENOTFOUND', 'EAI_AGAIN'].includes(err.code) && attempt < DNS_RETRIES && !clientRes.headersSent) {
+                        const delay = 1000 * 2 ** attempt;
+                        console.error(`[MODEL-PROXY] #${reqId} DNS retry ${attempt + 1}/${DNS_RETRIES} in ${delay}ms`);
+                        setTimeout(() => send(attempt + 1), delay);
+                        return;
+                    }
                     // DNS/connection-refused errors are non-retryable: a 502 makes the client
                     // retry 11x (~3min) when no upstream will ever come up. Return 400 instead.
                     const NON_RETRYABLE = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'];
@@ -917,6 +927,8 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 });
 
                 proxyReq.end(body);
+                };
+                send(0);
             });
         });
 

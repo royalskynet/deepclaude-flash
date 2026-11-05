@@ -61,6 +61,14 @@ export DC_GUARD_HARD="${DC_GUARD_HARD:-off}"
 # Claude Code's auto-mode security-classifier never hits the cheap/agnese backend
 # and never fails closed on long contexts.
 export DC_CLASSIFIER_MODE="${DC_CLASSIFIER_MODE:-allow}"
+# Per-machine egress proxy (M2: direct opencode.ai times out, 2026-11-05 → tw-relay).
+# config/ is untracked, so the file stays machine-local; absent/empty = direct.
+# Node only honors these with NODE_USE_ENV_PROXY=1.
+_egress="$(cat "$DC_HOME/config/egress-proxy" 2>/dev/null | tr -d '[:space:]')"
+if [[ -n "${DC_EGRESS_PROXY-$_egress}" ]]; then
+    export HTTPS_PROXY="${DC_EGRESS_PROXY-$_egress}" NODE_USE_ENV_PROXY=1
+    export NO_PROXY="127.0.0.1,localhost,::1"
+fi
 # stdout is the port on legacy launch; launchd doesn't need it — discard.
 # Key goes via env, never argv: `ps` output landed the value in 7 session transcripts
 # (2026-09-12..16 audit). argv[3]="" makes start-proxy.js fall back to CHEAPCLAUDE_API_KEY.

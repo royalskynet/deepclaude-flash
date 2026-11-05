@@ -63,6 +63,14 @@ for _l in "$HOME/.claude/skills/deep:$DC_HOME/skills/deep" \
             || echo "deepclaude: could not link $_p -> $_t" >&2
     fi
 done
+# 11253: config/settings.json registers Stop/PreToolUse hooks under config/hooks, which are
+# runtime symlinks. A repo sync that swaps ~/.deepclaude/deep-agent leaves them dangling, and
+# Claude Code then skips the hook silently (or, with an explicit interpreter, errors every
+# Stop). Repoint any dangling link whose target now lives in this repo.
+if [[ -x "$DC_HOME/bin/deep-hook-relink.sh" ]]; then
+    _relink="$("$DC_HOME/bin/deep-hook-relink.sh" 2>&1)"
+    [[ -z "$_relink" ]] || echo "$_relink" | sed "s/^/deepclaude: /" >&2
+fi
 
 loc="$DC_HOME/work/.claude/settings.local.json"; seed="$DC_HOME/config/settings.local.$(id -un).json"
 [[ -f "$loc" || ! -f "$seed" ]] || { mkdir -p "${loc%/*}" && cp "$seed" "$loc"; }
