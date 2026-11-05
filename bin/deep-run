@@ -53,7 +53,7 @@ case "${HTTPS_PROXY:-}" in
 esac
 
 f=${1:-}; d=${2:-$DC_HOME/work}
-WLOG="${WLOG:-$HOME/Library/Logs/openclaw/wrappers.log}"
+WLOG="${WLOG:-$HOME/Library/Logs/agent-tools/wrappers.log}"
 case "$f" in /*) ;; *) echo "deep-run: task path must be absolute: $f" >&2; exit 2 ;; esac
 [ -f "$f" ] || { echo "deep-run: task file not found: $f" >&2; exit 2; }
 [ -d "$d" ] || { echo "deep-run: cwd not found: $d" >&2; exit 2; }
