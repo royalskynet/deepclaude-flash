@@ -59,32 +59,22 @@ RC="$DC_HOME/work/.deep/$EPOCH.rc"
   # The by-cwd mirror is only valid for this run; left behind, it makes the stop-gate
   # judge every later deepclaude session in this cwd against this old task.
   M="$DC_HOME/work/.deep/by-cwd/$(printf '%s' "$d" | sed 's/[\/.]/-/g')"
-  [ "$(cat "$M" 2>/dev/null)" = "$f" ] && rm -f "$M"
+  [ "$(cat "$M" 2>/dev/null)" = "$f" ] && rm -f "$M" "$M.pf"
   # R2: the caller's task file must not drift from the copy deepclaude was given.
   new_hash=$(shasum -a 256 "$f" 2>/dev/null | cut -d' ' -f1)
   copy_hash=$(shasum -a 256 "$copy" 2>/dev/null | cut -d' ' -f1)
   tampered=0
   [ "$new_hash" = "$orig_hash" ] && [ "$copy_hash" = "$orig_hash" ] || tampered=1
-  # R1: mechanical judge on the ORIGINAL caller file.
-  verify=pass
-  # Vendored judge in this same directory first, PATH fallback; neither ⇒ explicit
-  # degrade: no machine check, which must not render as a failed check (no
-  # CLAIM_MISMATCH, no nonzero exit).
-  WV="$(dirname "$0")/wo-verify"
-  command -v "$WV" >/dev/null || WV="$(command -v wo-verify || true)"
-  if [ -z "$WV" ]; then
-    echo "wo-verify absent; acceptance block not machine-checked" >&2
-    verify=none
+  GATE="${DEEP_GATE:-$(command -v gate || echo /Users/you/dev/dispatch-router/bin/gate)}"
+  verify=none
+  wo_rc=0
+  if command -v "$GATE" >/dev/null 2>&1; then
+    "$GATE" judge "$f" "$d" "${DEEP_PFDIR:-}" --k "${DEEP_VERIFY_K:-2}"
+    wo_rc=$?
+    if [ "$wo_rc" = 0 ]; then verify=pass; else verify=fail; fi
   else
-    wo_output=$("$WV" "$f" 2>&1); wo_rc=$?
-    printf '%s\n' "$wo_output"
-    case "$wo_rc" in
-      0) verify=pass ;;
-      2) verify=none ;;
-      *) verify=fail ;;
-    esac
+    echo 'deep-run: WARN gate absent; acceptance block not machine-checked' >&2
   fi
-  echo "$(date '+%F %T') deep-run end rc=$rc verify=$verify $f" >> "$WLOG"
 
   # Summary anti-hallucination: append objective transcript stats so the model's final
   # prose is not the only output — a headless run's summary is the one part of it that
@@ -103,7 +93,8 @@ RC="$DC_HOME/work/.deep/$EPOCH.rc"
   fi
   final_rc=$rc
   [ "$tampered" = 1 ] && { echo "TASK_TAMPERED"; final_rc=1; }
-  [ "$verify" = fail ] && { echo "CLAIM_MISMATCH"; final_rc=1; }
+  [ "$verify" = fail ] && { echo "VERIFY_FAIL rc=$wo_rc"; final_rc=$wo_rc; }
+  echo "$(date '+%F %T') deep-run end rc=$final_rc model_rc=$rc verify=$verify $f" >> "$WLOG"
   printf '%s' "$final_rc" > "$RC"
   exit "$final_rc"
 } 2>&1 | tee -a "$OUT"

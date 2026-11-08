@@ -54,10 +54,23 @@ if [ "$n" -ge "$MAX_BLOCKS" ]; then
     exit 0
 fi
 
-wo-verify "$DEEP_TASK_FILE" >/tmp/deep-gate-verify.$$ 2>&1
+cwd=$(printf '%s' "$payload" | jq -r '.cwd // ""')
+[ -n "$cwd" ] || cwd="$PWD"
+slug=$(printf '%s' "$cwd" | sed 's/[\/.]/-/g')
+pfdir="${DEEP_PFDIR:-$(cat "$DC_HOME/work/.deep/by-cwd/$slug.pf" 2>/dev/null)}"
+GATE="${DEEP_GATE:-$(command -v gate || echo /Users/you/dev/dispatch-router/bin/gate)}"
+if [ -f "$pfdir/pin" ] && command -v "$GATE" >/dev/null 2>&1; then
+    "$GATE" judge "$DEEP_TASK_FILE" "$cwd" "$pfdir" --k 1 >/tmp/deep-gate-verify.$$ 2>&1
+else
+    (cd "$cwd" && wo-verify "$DEEP_TASK_FILE") >/tmp/deep-gate-verify.$$ 2>&1
+fi
 vrc=$?
 trap 'rm -f /tmp/deep-gate-verify.$$' EXIT
-if [ "$vrc" = 0 ] || [ "$vrc" = 2 ]; then
+if [ "$vrc" = 2 ]; then
+    echo "$(date '+%F %T') $SAFE_ID skip:none" >> "$LOG"
+    exit 0
+fi
+if [ "$vrc" = 0 ]; then
     echo "$(date '+%F %T') $SAFE_ID pass" >> "$LOG"
     exit 0
 fi

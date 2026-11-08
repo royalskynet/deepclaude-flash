@@ -23,7 +23,7 @@ description: 派工給 deep 執行人（deepclaude/OpenCode Go，沙箱外、可
 
 - `verify=pass` 只證明斷言：要含 (1) 必須保留的既有行為 `grep -q` 斷言；(2) 至少一條真實 CLI 端到端指令。收件後仍看 `git diff`。
 - 目標可能不在本機時，斷言「有回報」（例 `grep -q "找不到" "$REPORT"`），不斷言「目標存在」，否則 Stop gate 反覆擋、deep 空轉到 `DC_GUARD_ROUNDS`。
-- deep 端驗收走 `wo-verify "$DEEP_TASK_FILE"`；失敗印 `wo-verify FAIL line N: <cmd>`，先查那行是不是驗收寫錯。
+- deep 端驗收走共用 `gate judge`；失敗印 `wo-verify FAIL line N: <cmd>`，先查那行是不是驗收寫錯。
 
 ## 派工（Bash 裸呼）
 
@@ -40,3 +40,11 @@ description: 派工給 deep 執行人（deepclaude/OpenCode Go，沙箱外、可
 ## 不做
 
 - 需要 Anthropic 推理深度的決策（設計權衡、含糊需求解讀）留主 session。
+
+## 共用判定鏈
+
+判定鏈與 O 共用 `gate preflight`／`gate judge`，支援 `regress:` 回歸基準、`writes!:` 嚴格寫入範圍、`ALLOW-SKIP:` 附理由的 skip 例外。`DEEP_GATE` 可指定 gate；未安裝時印 `WARN` 與 `acceptance block not machine-checked` 降級警告。
+
+exit code 同 O：0 通過、1 lint 失敗、2 契約錯、3 pin 篡改、4 回歸、5 越界、6 作弊，其餘保留驗收首敗 rc。preflight 回 10 表示驗收動工前已過，deep-run 印 SKIPPED 並回 0。judge 失敗印 `VERIFY_FAIL rc=<n>`。
+
+`DEEP_JOB_MAX` 預設 3600 秒，逾時終止任務並回 124。`DEEP_VERIFY_K` 預設 2，Stop hook 固定 K=1。記帳沿用 `${DCQ_HOME:-$HOME/.dcq}/logs/billing.tsv` 四欄格式（時間、sub、模型、工單），目錄不存在則略過，不發 TG。

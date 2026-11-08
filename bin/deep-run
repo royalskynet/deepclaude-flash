@@ -71,6 +71,23 @@ fi
 # GH_TOKEN is resolved inside deep-run-inner (kv file, else `gh auth token`), never
 # here: anything put in the tmux command string below shows up verbatim in `ps`.
 
+GATE="${DEEP_GATE:-$(command -v gate || echo /Users/you/dev/dispatch-router/bin/gate)}"
+export DEEP_GATE="$GATE"
+case "${DEEP_JOB_MAX:-3600}" in ''|*[!0-9]*) echo 'deep-run: invalid DEEP_JOB_MAX' >&2; exit 2 ;; esac
+# 每次結束記帳；沿用 O 的四欄格式，不發通知。
+bill() {
+  BL="${DCQ_HOME:-$HOME/.dcq}/logs"
+  [ -d "$BL" ] && [ -w "$BL" ] || return 0
+  printf '%s\t%s\t%s\t%s\n' "$(date '+%F %T')" sub "${DEEP_MODEL:-opencode-go/$OPENCODE_GO_MODEL}" "$f" >> "$BL/billing.tsv"
+}
+finish() {
+  mirror="${DEEP_TASK_DIR:-}/by-cwd/${SLUG:-}"
+  if [ -n "${pfdir:-}" ] && [ "$(cat "$mirror.pf" 2>/dev/null)" = "$pfdir" ]; then
+    rm -f "$mirror" "$mirror.pf"
+  fi
+  bill
+}
+trap finish EXIT
 mkdir -p "$(dirname "$WLOG")"
 echo "$(date '+%F %T') deep-run start $f cwd=$d" >> "$WLOG"
 
@@ -92,8 +109,21 @@ chmod 444 "$DEEP_TASK_FILE"
 # cwd with / and . both replaced by - (same as deep-run-inner transcript slug).
 mkdir -p "$DEEP_TASK_DIR/by-cwd"
 SLUG=$(printf '%s' "$d" | sed 's/[\/.]/-/g')
+pfdir="$DEEP_TASK_DIR/$EPOCH.pf"
+if command -v "$GATE" >/dev/null 2>&1; then
+  "$GATE" preflight "$f" "$d" "$pfdir"
+  prc=$?
+  case "$prc" in
+    0) ;;
+    10) echo 'deep-run: SKIPPED（驗收動工前已過）'; exit 0 ;;
+    *) exit 2 ;;
+  esac
+else
+  echo 'deep-run: WARN gate absent; acceptance block not machine-checked' >&2
+fi
 printf '%s' "$f" > "$DEEP_TASK_DIR/by-cwd/$SLUG"
-export DEEP_TASK_FILE
+printf '%s' "$pfdir" > "$DEEP_TASK_DIR/by-cwd/$SLUG.pf"
+export DEEP_TASK_FILE DEEP_PFDIR="$pfdir"
 
 # deep-run is usually reached through the ~/.local/bin/deep-run symlink; resolve it
 # so the inner's real path is used (a half-resolved INNER = ~/.local/bin/deep-run-inner
@@ -110,19 +140,47 @@ command -v "$INNER" >/dev/null || { echo "deep-run: inner not found: $INNER" >&2
 
 if [ "${DEEP_NO_TMUX:-0}" = 1 ]; then
   # Tests / interactive debugging: run straight, inherit this shell's env.
-  "$INNER" "$DEEP_TASK_FILE" "$d" "$f" "$EPOCH"
+  # 獨立 process group，逾時可一併終止模型與輸出管線。
+  set -m
+  "$INNER" "$DEEP_TASK_FILE" "$d" "$f" "$EPOCH" &
+  inner_pid=$!
+  started=$SECONDS
+  while kill -0 "$inner_pid" 2>/dev/null; do
+    if [ "$((SECONDS - started))" -ge "${DEEP_JOB_MAX:-3600}" ]; then
+      kill -TERM -- "-$inner_pid" 2>/dev/null || true
+      wait "$inner_pid" 2>/dev/null
+      printf '124' > "$DEEP_TASK_DIR/$EPOCH.rc"
+      echo 'deep-run: 超過 DEEP_JOB_MAX' >&2
+      echo "$(date '+%F %T') deep-run end rc=124 model_rc=unknown verify=none $f" >> "$WLOG"
+      exit 124
+    fi
+    sleep 1
+  done
+  wait "$inner_pid"
+  set +m
+
 else
   # tmux env does not inherit the caller's exports — hand them over explicitly.
   envstr="env PATH='$PATH' OPENCODE_GO_MODEL='$OPENCODE_GO_MODEL'"
   envstr="$envstr DC_MAIN_HARNESS_FILE='$DC_MAIN_HARNESS_FILE' DC_LOOP_GUARD='$DC_LOOP_GUARD' DC_GUARD_HARD='$DC_GUARD_HARD'"
   envstr="$envstr DEEP_TASK_FILE='$DEEP_TASK_FILE' DC_HOME='$DC_HOME' WLOG='$WLOG'"
+  envstr="$envstr DEEP_GATE='$GATE' DEEP_PFDIR='$pfdir' DEEP_VERIFY_K='${DEEP_VERIFY_K:-2}'"
   envstr="$envstr CREDS_DIR='$CREDS_DIR'"
   envstr="$envstr CHEAPCLAUDE_DEFAULT_BACKEND='$CHEAPCLAUDE_DEFAULT_BACKEND' OPENROUTER_MODEL='$OPENROUTER_MODEL'"  # deep-or
   tmux -L deep new-session -d -s "deep-$EPOCH" \
-    "$envstr '$INNER' '$DEEP_TASK_FILE' '$d' '$f' '$EPOCH' ; tmux -L deep wait-for -S deep-$EPOCH"
-  # Foreground: wait for the inner to signal completion (wait-for is released by the
-  # inner's own `wait-for -S`, which follows the model run to its end).
-  tmux -L deep wait-for "deep-$EPOCH"
+    "$envstr '$INNER' '$DEEP_TASK_FILE' '$d' '$f' '$EPOCH'" || exit 2
+  # 輪詢本次 session，逾時只終止這一單。
+  started=$SECONDS
+  while tmux -L deep has-session -t "deep-$EPOCH" 2>/dev/null; do
+    if [ "$((SECONDS - started))" -ge "${DEEP_JOB_MAX:-3600}" ]; then
+      tmux -L deep kill-session -t "deep-$EPOCH"
+      printf '124' > "$DEEP_TASK_DIR/$EPOCH.rc"
+      echo 'deep-run: 超過 DEEP_JOB_MAX' >&2
+      echo "$(date '+%F %T') deep-run end rc=124 model_rc=unknown verify=none $f" >> "$WLOG"
+      exit 124
+    fi
+    sleep 1
+  done
 fi
 cat "$DEEP_TASK_DIR/$EPOCH.out"
 exit "$(cat "$DEEP_TASK_DIR/$EPOCH.rc")"

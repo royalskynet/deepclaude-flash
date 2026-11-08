@@ -15,10 +15,27 @@ mkdir -p "$tmp/home/.local/bin" "$tmp/work" "$tmp/home/.deepclaude/config" "$tmp
 # the snapshot into the real runtime copy and silently break every assertion below.
 export DC_HOME="$tmp/home/.deepclaude"
 touch "$tmp/home/.deepclaude/config/deep-system.md"
+cat > "$tmp/gate" <<'GATESTUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$DC_HOME/gate.args"
+if [ "$1" = preflight ]; then
+  mkdir -p "$4"; touch "$4/pin"
+  exit "${PREFLIGHT_RC:-0}"
+fi
+exit "${JUDGE_RC:-0}"
+GATESTUB
+chmod +x "$tmp/gate"
+export DEEP_GATE="$tmp/gate"
+export DEEP_VERIFY_K=2
+unset PREFLIGHT_RC JUDGE_RC STUB_SLEEP DEEP_PFDIR DEEP_NO_TMUX
+export DCQ_HOME="$tmp/billing"
+mkdir -p "$DCQ_HOME/logs"
+
 printf -- '---\nid: WO-0\n---\ntask\n' > "$tmp/task.md"
 
 cat > "$tmp/home/.local/bin/deepclaude" <<'STUB'
 #!/usr/bin/env bash
+sleep "${STUB_SLEEP:-0}"
 printf '%s\n' "$@" > "$STUB_ARGV"
 env | grep -E '^(OPENCODE_GO_MODEL|DC_MAIN_HARNESS_FILE|DC_LOOP_GUARD|GH_TOKEN|DEEP_TASK_FILE)=' | sort > "$STUB_ENV"
 STUB
@@ -79,8 +96,8 @@ out=$(HOME="$tmp/home" WLOG="$tmp/w.log" HTTPS_PROXY="http://localhost:8080" \
       "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); rc=$?
 check "refuses to run inside the sandbox"          '[ "$rc" = 3 ] && grep -q "INSIDE sandbox" <<< "$out"'
 
-# (d) End-to-end with the real mechanical judge (wo-verify, not the stub): a task
-# whose 驗收 block fails must make deep-run exit nonzero and print CLAIM_MISMATCH.
+# (d) 假 gate 回報驗收失敗：工單
+# whose 驗收 block fails must make deep-run exit nonzero and print VERIFY_FAIL.
 cat > "$tmp/fail.md" <<'BAD'
 # 任務
 fail this on purpose
@@ -92,25 +109,48 @@ false
 
 預期： 會失敗，rc≠0
 BAD
-fout=$(HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/w2.log" HTTPS_PROXY="" \
+fout=$(JUDGE_RC=1 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/w2.log" HTTPS_PROXY="" \
        STUB_ARGV="$tmp/argv2" STUB_ENV="$tmp/env2" DEEP_NO_TMUX=1 \
        "$HERE/deep-run" "$tmp/fail.md" "$tmp/work" 2>&1); frc=$?
-check "failing 驗收 block ⇒ CLAIM_MISMATCH, rc≠0" \
-  '[ "$frc" != 0 ] && grep -q "CLAIM_MISMATCH" <<< "$fout"'
+check "failing 驗收 block ⇒ VERIFY_FAIL, rc≠0" \
+  '[ "$frc" != 0 ] && grep -q "VERIFY_FAIL" <<< "$fout"'
 
-# Guard (wo-verify absent): 工具缺席不得渲染成任務失敗。移開同目錄 vendor 版、PATH 剝掉
-# wo-verify 後收尾檢查必須 rc=0、不印 CLAIM_MISMATCH、印明確降級訊息。
-(
-  trap 'mv "$tmp/wo-verify.hidden" "$HERE/wo-verify"' EXIT
-  mv "$HERE/wo-verify" "$tmp/wo-verify.hidden"
-  PATH="$tmp/home/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-  gout=$(HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wg.log" HTTPS_PROXY="" \
-         STUB_ARGV="$tmp/argvg" STUB_ENV="$tmp/envg" DEEP_NO_TMUX=1 \
-         "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); grc=$?
-  check "wo-verify absent ⇒ no CLAIM_MISMATCH, rc=0, degrade msg" \
-    '[ "$grc" = 0 ] && ! grep -q "CLAIM_MISMATCH" <<< "$gout" && grep -q "not machine-checked" <<< "$gout"'
-)
-[ -x "$HERE/wo-verify" ] || { echo "FAIL: wo-verify not restored"; fail=1; }
+gout=$(DEEP_GATE="$tmp/missing-gate" HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wg.log" HTTPS_PROXY="" \
+  STUB_ARGV="$tmp/argvg" STUB_ENV="$tmp/envg" DEEP_NO_TMUX=1 \
+  "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); grc=$?
+check "gate absent warns and degrades" '[ "$grc" = 0 ] && grep -q "WARN.*acceptance block not machine-checked" <<< "$gout"'
+pout=$(PREFLIGHT_RC=2 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wp.log" HTTPS_PROXY="" \
+  STUB_ARGV="$tmp/argvp" STUB_ENV="$tmp/envp" DEEP_NO_TMUX=1 \
+  "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); prc=$?
+check "preflight rc=2 prevents model" '[ "$prc" = 2 ] && [ ! -e "$tmp/argvp" ]'
+jout=$(JUDGE_RC=4 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wj.log" HTTPS_PROXY="" \
+  STUB_ARGV="$tmp/argvj" STUB_ENV="$tmp/envj" DEEP_NO_TMUX=1 \
+  "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); jrc=$?
+check "judge preserves rc=4" '[ "$jrc" = 4 ] && grep -q "VERIFY_FAIL rc=4" <<< "$jout"'
+check "end log uses final rc" 'grep -q "end rc=4 model_rc=0 verify=fail" "$tmp/wj.log"'
+check "judge gets K and pfdir" 'grep -q "judge .*\.pf --k 2" "$DC_HOME/gate.args"'
+timeout_started=$SECONDS
+tout=$(STUB_SLEEP=10 DEEP_JOB_MAX=2 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wtime.log" HTTPS_PROXY="" \
+  STUB_ARGV="$tmp/argvtime" STUB_ENV="$tmp/envtime" DEEP_NO_TMUX=1 \
+  "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); trc=$?
+check "job deadline rc=124" '[ "$((SECONDS - timeout_started))" -lt 8 ] && [ "$trc" = 124 ] && grep -q "超過 DEEP_JOB_MAX" <<< "$tout"'
+check "billing recorded" 'test -s "$DCQ_HOME/logs/billing.tsv" && grep -q "opencode-go/deepseek-v4.1-flash" "$DCQ_HOME/logs/billing.tsv"'
+
+# 其它 preflight rc 一律轉 2；10 直接 SKIPPED，均不得啟動模型。
+for pre in 1 10; do
+  pout=$(PREFLIGHT_RC="$pre" HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wp$pre.log" HTTPS_PROXY="" \
+    STUB_ARGV="$tmp/argvp$pre" STUB_ENV="$tmp/envp$pre" DEEP_NO_TMUX=1 \
+    "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); prc=$?
+  if [ "$pre" = 10 ]; then
+    check "preflight 10 skips" '[ "$prc" = 0 ] && grep -q SKIPPED <<< "$pout" && [ ! -e "$tmp/argvp10" ]'
+  else
+    check "preflight other failure maps to 2" '[ "$prc" = 2 ] && [ ! -e "$tmp/argvp1" ]'
+  fi
+done
+jout=$(JUDGE_RC=2 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wnone.log" HTTPS_PROXY="" \
+  STUB_ARGV="$tmp/argvnone" STUB_ENV="$tmp/envnone" DEEP_NO_TMUX=1 \
+  "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); jrc=$?
+check "judge rc=2 cannot silently pass" '[ "$jrc" = 2 ] && grep -q "VERIFY_FAIL rc=2" <<< "$jout"'
 
 # R6 (a): default mode must detach the model run into a private tmux session. A fake
 # `tmux` (earlier on PATH than the real one, since deep-run prepends ~/.local/bin)
@@ -118,6 +158,13 @@ check "failing 驗收 block ⇒ CLAIM_MISMATCH, rc≠0" \
 cat > "$tmp/home/.local/bin/tmux" <<'TMSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >> "$TMUX_ARGV"
+case "$3" in
+  new-session)
+    if [ "${TMUX_TIMEOUT:-0}" = 1 ]; then exit 0; fi
+    bash -c "${!#}" ;;
+  kill-session) touch "$TMUX_ARGV.killed" ;;
+  has-session) [ "${TMUX_TIMEOUT:-0}" = 1 ] ;;
+esac
 TMSTUB
 chmod +x "$tmp/home/.local/bin/tmux"
 TMUX_ARGV="$tmp/tmux.argv" GTMP="$(mktemp -d "${TMPDIR:-/tmp}/deep-tmux.XXXXXX")" \
@@ -127,9 +174,18 @@ tmux_args="$(cat "$tmp/tmux.argv" 2>/dev/null)"
 check "tmux detach uses private -L deep socket + new-session" \
   'grep -q -- "-L" <<< "$tmux_args" && grep -q -- "deep" <<< "$tmux_args" && grep -q "new-session" <<< "$tmux_args"'
 
+tout=$(TMUX_TIMEOUT=1 TMUX_ARGV="$tmp/tmux-time.argv" DEEP_JOB_MAX=2 \
+  HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wtmux-time.log" HTTPS_PROXY="" \
+  "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); trc=$?
+check "tmux deadline kills only dispatched session" \
+  '[ "$trc" = 124 ] && [ -f "$tmp/tmux-time.argv.killed" ] && grep -q "kill-session" "$tmp/tmux-time.argv" && grep -q "超過 DEEP_JOB_MAX" <<< "$tout"'
+
 # R3 (b): the Stop gate blocks a live deep-run session whose 驗收 still fails up to
 # DEEP_GATE_MAX_BLOCKS times per session, then is silent.
 GATE="$HERE/../hooks/deep-stop-gate.sh"
+printf '#!/bin/bash\nexit 1\n' > "$tmp/home/.local/bin/wo-verify"
+chmod +x "$tmp/home/.local/bin/wo-verify"
+export PATH="$tmp/home/.local/bin:$PATH"
 g1=$(echo '{"session_id":"t1","stop_hook_active":false}' | DEEP_GATE_MAX_BLOCKS=2 DEEP_TASK_FILE="$tmp/fail.md" DC_HOME="$tmp/home/.deepclaude" \
       "$GATE" 2>&1)
 g2=$(echo '{"session_id":"t1","stop_hook_active":true}' | DEEP_GATE_MAX_BLOCKS=2 DEEP_TASK_FILE="$tmp/fail.md" DC_HOME="$tmp/home/.deepclaude" \
@@ -152,5 +208,5 @@ HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wl2.log" HTTPS_PROXY=""
   DEEP_NO_TMUX=1 "$HERE/deep-run" "$tmp/task.md" "$tmp/livewt" >/dev/null 2>&1
 check "worktree of a live repo is allowed" '[ -s "$tmp/argvw" ]'
 
-[ "$fail" = 0 ] && echo "OK: 20/20 deep-run invocation checks passed"
+[ "$fail" = 0 ] && echo "OK: deep-run invocation checks passed"
 exit "$fail"

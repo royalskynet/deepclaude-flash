@@ -37,8 +37,10 @@ mkdir -p "$cwd"
 slug=$(printf '%s' "$cwd" | sed 's/[\/.]/-/g')
 printf '%s' "$task" > "$BYCWD/$slug"
 
-# Need wo-verify on PATH (vendored in same bin dir).
-export PATH="$HERE:$PATH"
+mkdir -p "$DC_HOME/bin"
+printf '#!/bin/bash\nexit "${VERIFY_RC:-1}"\n' > "$DC_HOME/bin/wo-verify"
+chmod +x "$DC_HOME/bin/wo-verify"
+export PATH="$DC_HOME/bin:$PATH"
 
 # Case 1: matching cwd -> hook must recover the task file and block.
 out=$(printf '{"session_id":"t1","cwd":"%s","stop_hook_active":false}' "$cwd" \
@@ -79,4 +81,26 @@ o5=$(printf '{"session_id":"t9","cwd":"%s","stop_hook_active":true}' "$cwd" \
   | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
 [ -z "$o5" ] && echo "ok: 別人的 block 續跑→不介入" || { echo "FAIL: 別人的續跑被介入 — $o5"; rc=1; }
 
+o6=$(printf '{"session_id":"none","cwd":"%s"}' "$cwd" \
+  | env -u DEEP_TASK_FILE VERIFY_RC=2 "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+if [ -z "$o6" ] && tail -1 "$LOG" | grep -q 'none skip:none' && ! grep -q 'none pass' "$LOG"; then
+  echo 'ok: rc=2 記 skip:none，不寫 pass'
+else
+  echo 'FAIL: rc=2 被誤判'; rc=1
+fi
+mkdir -p "$DC_HOME/pf"; touch "$DC_HOME/pf/pin"
+printf '%s' "$DC_HOME/pf" > "$BYCWD/$slug.pf"
+cat > "$DC_HOME/bin/gate" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" > "$DC_HOME/judge.args"
+exit 0
+STUB
+chmod +x "$DC_HOME/bin/gate"
+o7=$(printf '{"session_id":"pin","cwd":"%s"}' "$cwd" \
+  | env -u DEEP_TASK_FILE -u DEEP_PFDIR DEEP_GATE="$DC_HOME/bin/gate" "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+if [ -z "$o7" ] && grep -q "judge $task $cwd $DC_HOME/pf --k 1" "$DC_HOME/judge.args" && tail -1 "$LOG" | grep -q 'pin pass'; then
+  echo 'ok: .pf 恢復並 judge K=1'
+else
+  echo 'FAIL: pin judge 未執行'; rc=1
+fi
 exit "$rc"
