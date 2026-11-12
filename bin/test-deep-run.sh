@@ -26,8 +26,15 @@ exit "${JUDGE_RC:-0}"
 GATESTUB
 chmod +x "$tmp/gate"
 export DEEP_GATE="$tmp/gate"
+# 超過 DEEP_JOB_MAX 時優先用 pin 跑 wo-verify --pinned；假的 wo-verify 同樣吃 JUDGE_RC。
+printf '#!/bin/bash\nexit "${JUDGE_RC:-0}"\n' > "$tmp/wov"
+chmod +x "$tmp/wov"
+export DEEP_WO_VERIFY="$tmp/wov"
 export DEEP_VERIFY_K=2
-unset PREFLIGHT_RC JUDGE_RC STUB_SLEEP DEEP_PFDIR DEEP_NO_TMUX
+printf '#!/bin/bash\necho stub-lint-out\nexit "${LINT_RC:-0}"\n' > "$tmp/lint"
+chmod +x "$tmp/lint"
+export DEEP_LINT="$tmp/lint"
+unset PREFLIGHT_RC JUDGE_RC STUB_SLEEP DEEP_PFDIR DEEP_NO_TMUX LINT_RC
 export DCQ_HOME="$tmp/billing"
 mkdir -p "$DCQ_HOME/logs"
 
@@ -96,6 +103,15 @@ out=$(HOME="$tmp/home" WLOG="$tmp/w.log" HTTPS_PROXY="http://localhost:8080" \
       "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); rc=$?
 check "refuses to run inside the sandbox"          '[ "$rc" = 3 ] && grep -q "INSIDE sandbox" <<< "$out"'
 
+# 准入閘：deep-lint 非零就 exit 2、轉印 lint 輸出、不叫 deepclaude、不記帳。
+rm -f "$tmp/argv.lint"
+out=$(HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" STUB_ARGV="$tmp/argv.lint" STUB_ENV="$tmp/env.lint" \
+      WLOG="$tmp/w.log" HTTPS_PROXY="" LINT_RC=1 DEEP_NO_TMUX=1 \
+      "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); rc=$?
+check "lint FAIL ⇒ exit 2 and refuse"               '[ "$rc" = 2 ] && grep -q "stub-lint-out" <<< "$out" && grep -q "deep-lint 未過" <<< "$out"'
+check "lint FAIL ⇒ deepclaude never runs"           '[ ! -e "$tmp/argv.lint" ]'
+check "lint FAIL ⇒ logged as lint-refused"          'grep -q "deep-run lint-refused $tmp/task.md" "$tmp/w.log"'
+
 # (d) 假 gate 回報驗收失敗：工單
 # whose 驗收 block fails must make deep-run exit nonzero and print VERIFY_FAIL.
 cat > "$tmp/fail.md" <<'BAD'
@@ -130,10 +146,15 @@ check "judge preserves rc=4" '[ "$jrc" = 4 ] && grep -q "VERIFY_FAIL rc=4" <<< "
 check "end log uses final rc" 'grep -q "end rc=4 model_rc=0 verify=fail" "$tmp/wj.log"'
 check "judge gets K and pfdir" 'grep -q "judge .*\.pf --k 2" "$DC_HOME/gate.args"'
 timeout_started=$SECONDS
-tout=$(STUB_SLEEP=10 DEEP_JOB_MAX=2 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wtime.log" HTTPS_PROXY="" \
+tout=$(JUDGE_RC=1 STUB_SLEEP=10 DEEP_JOB_MAX=2 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wtime.log" HTTPS_PROXY="" \
   STUB_ARGV="$tmp/argvtime" STUB_ENV="$tmp/envtime" DEEP_NO_TMUX=1 \
   "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); trc=$?
-check "job deadline rc=124" '[ "$((SECONDS - timeout_started))" -lt 8 ] && [ "$trc" = 124 ] && grep -q "超過 DEEP_JOB_MAX" <<< "$tout"'
+check "job deadline + verify fails ⇒ rc=124" '[ "$((SECONDS - timeout_started))" -lt 8 ] && [ "$trc" = 124 ] && grep -q "超過 DEEP_JOB_MAX" <<< "$tout" && grep -q "end rc=124 model_rc=unknown verify=fail" "$tmp/wtime.log"'
+# 逾時但驗收過（pin 驗過）⇒ rc=0，不是 124。
+pout=$(JUDGE_RC=0 STUB_SLEEP=10 DEEP_JOB_MAX=2 HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wpass.log" HTTPS_PROXY="" \
+  STUB_ARGV="$tmp/argvpass" STUB_ENV="$tmp/envpass" DEEP_NO_TMUX=1 \
+  "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); prc=$?
+check "job deadline + verify passes ⇒ rc=0 with 驗收已過" '[ "$prc" = 0 ] && grep -q "驗收已過" <<< "$pout" && grep -q "end rc=0 model_rc=124 verify=pass" "$tmp/wpass.log"'
 check "billing recorded" 'test -s "$DCQ_HOME/logs/billing.tsv" && grep -q "opencode-go/deepseek-v4.1-flash" "$DCQ_HOME/logs/billing.tsv"'
 
 # 其它 preflight rc 一律轉 2；10 直接 SKIPPED，均不得啟動模型。
@@ -174,7 +195,7 @@ tmux_args="$(cat "$tmp/tmux.argv" 2>/dev/null)"
 check "tmux detach uses private -L deep socket + new-session" \
   'grep -q -- "-L" <<< "$tmux_args" && grep -q -- "deep" <<< "$tmux_args" && grep -q "new-session" <<< "$tmux_args"'
 
-tout=$(TMUX_TIMEOUT=1 TMUX_ARGV="$tmp/tmux-time.argv" DEEP_JOB_MAX=2 \
+tout=$(JUDGE_RC=1 TMUX_TIMEOUT=1 TMUX_ARGV="$tmp/tmux-time.argv" DEEP_JOB_MAX=2 \
   HOME="$tmp/home" CREDS_DIR="$tmp/home/.creds" WLOG="$tmp/wtmux-time.log" HTTPS_PROXY="" \
   "$HERE/deep-run" "$tmp/task.md" "$tmp/work" 2>&1); trc=$?
 check "tmux deadline kills only dispatched session" \

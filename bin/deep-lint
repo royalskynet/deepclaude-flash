@@ -11,6 +11,11 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
 fi
 wo="${1:?用法: deep-lint <task.md>}"
 [ -f "$wo" ] || { echo "deep-lint: 檔案不存在 $wo"; exit 1; }
+# DEEP_LINT_STRICT=1：WARN 級契約瑕疵升 FAIL（不設變數時行為完全不變）。
+strict=; [ "${DEEP_LINT_STRICT:-}" = 1 ] && strict=1
+# ponytail: WARN→FAIL 只是切標籤；只升「缺預期／缺斷言」與 strict 專屬的缺範圍／缺禁止段，
+# 正文禁令、長度超標、其餘啟發式仍 WARN。要全升得逐條加 second arg，沒需求就不做。
+L() { [ -n "$strict" ] && echo "LINT FAIL: $1" || echo "LINT WARN: $1"; }
 # deep-lint is reached through a ~/.local/bin symlink; resolve it so the vendored
 # wo-verify in this same directory is found even when PATH hides it.
 self=$0
@@ -24,23 +29,49 @@ WV="$(cd "$(dirname "$self")" && pwd)/wo-verify"
 command -v "$WV" >/dev/null || WV="$(command -v wo-verify || true)"
 if [ -z "$WV" ]; then
   # 沒檢查 ≠ 檢查了而且不符：明確降級，不印 LINT FAIL、不 exit 非零。
+  if [ -n "$strict" ]; then
+    echo "LINT FAIL: PATH 找不到 wo-verify，驗收區塊無法機械檢查"
+    exit 1
+  fi
   echo "wo-verify absent; acceptance block not machine-checked" >&2
   echo "LINT OK (unchecked)"
   exit 0
 fi
 if ! "$WV" "$wo" --dry >/dev/null 2>&1; then
   fail_block=1
+  fail_syntax=1
 fi
+# 驗收章節的 bash fence 數（wo-verify 會串成一支腳本跑，兩塊＝兩套 setup 互相污染）。
+nbash=$(awk '
+  /^```/ { if (inblk) { inblk = 0 } else { inblk = 1; if (insec && $0 ~ /^```(bash|sh|zsh|shell)?[[:space:]]*$/) c++ }; next }
+  inblk { next }
+  /^#+ / {
+    lvl = index($0, " ") - 1
+    if (insec && lvl <= seclvl) insec = 0
+    if (!insec && ($0 ~ /^#+[[:space:]]*驗收/ || $0 ~ /^#+[[:space:]]*[Vv]erif/)) { insec = 1; seclvl = lvl }
+  }
+  END { print c + 0 }
+' "$wo")
 warn=0
 
 expected=$(awk '
   /^```/ { fence = !fence; next }
-  !fence && /^[[:space:]]*預期[：:]/ { found = 1 }
+  !fence && /^[[:space:]]*預期[：:][[:space:]]*[^[:space:]]/ { found = 1 }
   END { exit !found }
 ' "$wo")
 if [ "$?" -ne 0 ]; then
-  echo 'LINT WARN: 缺少 fence 外的「預期：」行'
-  warn=1
+  L '缺少 fence 外的「預期：」行'
+  warn=1; [ -n "$strict" ] && fail_strict=1
+fi
+
+# writes: 範圍行（strict 專屬）：dc 派工靠它判 scope，缺了就只能事後看 diff。
+if [ -n "$strict" ] && ! awk '
+  /^```/ { fence = !fence; next }
+  !fence && /^[[:space:]]*writes[：:][[:space:]]*[^[:space:]]/ { found = 1 }
+  END { exit !found }
+' "$wo"; then
+  echo 'LINT FAIL: 缺少 fence 外的 writes: 範圍行（dc 派工無法判 scope）'
+  fail_strict=1
 fi
 
 # deep only treats the "## 禁止" section as a hard constraint; a prohibition left in
@@ -80,11 +111,38 @@ if [ "$n" -gt "$limit" ]; then
   warn=1
 fi
 
+# 拆單閘門：四訊號各一分——超行數公式、### >2、writes: 路徑 >2、任務段動作動詞 >3。
+# 10-27～11-10 派deep 168 次（不含 /fi）：0 分過 32/54，1 分 27/82，≥2 分 11/32。
+read -r w v waive <<EOF
+$(awk '
+  /^```/ { fence = !fence; next }
+  fence { next }
+  /^[[:space:]]*拆單豁免[：:][[:space:]]*[^[:space:]]/ { waive = 1 }
+  /^##+[[:space:]]*任務/ { intask = 1; next }
+  /^##[[:space:]]/ { intask = 0; next }
+  /^[[:space:]]*writes!?[：:]/ {
+    s = $0; sub(/^[[:space:]]*writes!?[：:][[:space:]]*/, "", s); gsub(/[,，、]/, " ", s)
+    w += split(s, a, " ")
+  }
+  intask { v += gsub(/新增|實作|改成|改為|修正|修好|重寫|建立|加上|補上|移除|刪除|拆成|整合|遷移/, "&") }
+  END { print w + 0, v + 0, waive + 0 }
+' "$wo")
+EOF
+score=$(( (n > limit) + (h3 > 2) + (w > 2) + (v > 3) ))
+why="行數 $((n))/${limit}、### ${h3}/2、writes ${w}/2、動詞 ${v}/3"
+if [ "$score" -ge 2 ] && [ "$waive" = 0 ]; then
+  echo "LINT FAIL: 拆單分數 ${score}/4（${why}）——拆成一單一行為、前一張 verify=pass 才派下一張；真拆不了就加一行「拆單豁免：<理由>」"
+  fail_split=1
+elif [ "$score" -ge 1 ]; then
+  echo "LINT WARN: 拆單分數 ${score}/4（${why}）——2 分起擋"
+  warn=1
+fi
+
 # 斷言閘門：驗收區塊若全是唯讀指令，deep 什麼都沒做
 # wo-verify 也會 rc=0 → verify=pass（2026-09-24 實證）。
 if ! "$WV" "$wo" --dump 2>/dev/null | grep -qE '(^|[;&|[:space:](])(test|\[|\[\[|diff|cmp)[[:space:]]|grep[[:space:]]+-[A-Za-z]*q'; then
-  echo "LINT WARN: 驗收區塊無任何會非零退出的斷言（test／[ ]／grep -q／diff）——deep 什麼都沒做也會 verify=pass"
-  warn=1
+  L "驗收區塊無任何會非零退出的斷言（test／[ ]／grep -q／diff）——deep 什麼都沒做也會 verify=pass"
+  warn=1; [ -n "$strict" ] && fail_strict=1
 fi
 
 # 否定斷言閘門：`! cmd` 在 set -e 下被明確豁免（bash 手冊：return value
@@ -167,6 +225,15 @@ h1=$(awk '
   /^```/ { fence = !fence; next }
   !fence && /^# (任務|驗收|不動|禁)/ { print 1 }
 ' "$wo")
+# 禁止段閘門（strict 專屬）：deep 只認「## 禁止」段為硬約束。
+if [ -n "$strict" ] && ! awk '
+  /^```/ { fence = !fence; next }
+  !fence && /^##+[[:space:]]*禁止/ { print 1 }
+' "$wo" | grep -q .; then
+  echo 'LINT FAIL: 缺「## 禁止」段——deep 只認該段為硬約束'
+  fail_strict=1
+fi
+
 if [ -n "$h1" ]; then
   echo 'LINT WARN: 段落標題用了一級 #，deep-lint 只認 ##——改成 ##（fix 9478）'
   warn=1
@@ -179,6 +246,12 @@ if printf '%s\n' "$dump" | grep -q 'date -u'; then
 fi
 
 [ "${fail_block:-0}" = 1 ] && { echo "LINT FAIL: no runnable 驗收 block"; exit 1; }
+if [ -n "$strict" ]; then
+  [ "${fail_syntax:-0}" = 1 ] && echo 'LINT FAIL: 驗收區塊 bash -n 語法錯（或無可跑驗收區塊）' && fail_strict=1
+  [ "$nbash" -gt 1 ] && echo "LINT FAIL: 驗收章節有 $nbash 個 bash fence——wo-verify 串成一支腳本跑，合成一塊" && fail_strict=1
+  [ "${fail_strict:-0}" = 1 ] && exit 1
+fi
 [ "${fail_bang:-0}" = 1 ] && exit 1
+[ "${fail_split:-0}" = 1 ] && exit 1
 [ "$warn" -eq 0 ] && echo "LINT OK"
 exit 0

@@ -87,6 +87,17 @@ finish() {
   fi
   bill
 }
+# 准入閘：與 dc／dcq add 同一支 deep-lint，FAIL（含拆單分數 ≥2）就不開跑，免得燒完 150 輪才判失敗。
+LINT="${DEEP_LINT:-$(command -v deep-lint || true)}"
+if [ -z "$LINT" ]; then
+  echo 'deep-run: 找不到 deep-lint，工單未經准入檢查' >&2
+elif ! lout=$("$LINT" "$f" 2>&1); then
+  printf '%s\n' "$lout" >&2
+  echo "deep-run: deep-lint 未過，拒絕派出：$f" >&2
+  mkdir -p "$(dirname "$WLOG")"
+  echo "$(date '+%F %T') deep-run lint-refused $f" >> "$WLOG"
+  exit 2
+fi
 trap finish EXIT
 mkdir -p "$(dirname "$WLOG")"
 echo "$(date '+%F %T') deep-run start $f cwd=$d" >> "$WLOG"
@@ -138,6 +149,32 @@ fi
 INNER="$(cd "$(dirname "$self")" && pwd)/deep-run-inner"
 command -v "$INNER" >/dev/null || { echo "deep-run: inner not found: $INNER" >&2; exit 2; }
 
+# 超過 DEEP_JOB_MAX（兩分支共用）：殺掉之後以驗收為準，比照 dcq jobmax_verify。
+# preflight 的 pin 存在 → wo-verify --pinned 同一份 pin（不重抽）；沒 pin 但有 GATE → gate judge K=1；都沒有 → none。
+# 過 → rc=0；否則 124。
+deadline_verdict() {
+  local v=none WV="${DEEP_WO_VERIFY:-$(command -v wo-verify || true)}" jrc=0
+  if [ -f "$pfdir/pin" ] && [ -n "$WV" ]; then
+    ( cd "$d" && "$WV" "$f" --pinned "$pfdir/pin" ) </dev/null >/dev/null 2>&1
+    jrc=$?
+    if [ "$jrc" = 0 ]; then v=pass; else v=fail; fi
+  elif command -v "$GATE" >/dev/null 2>&1; then
+    "$GATE" judge "$f" "$d" "$pfdir" --k 1 </dev/null
+    jrc=$?
+    if [ "$jrc" = 0 ]; then v=pass; else v=fail; fi
+  fi
+  if [ "$v" = pass ]; then
+    echo 'deep-run: 超過 DEEP_JOB_MAX，但驗收已過' >&2
+    printf '0' > "$DEEP_TASK_DIR/$EPOCH.rc"
+    echo "$(date '+%F %T') deep-run end rc=0 model_rc=124 verify=pass $f" >> "$WLOG"
+    exit 0
+  fi
+  printf '124' > "$DEEP_TASK_DIR/$EPOCH.rc"
+  echo 'deep-run: 超過 DEEP_JOB_MAX' >&2
+  echo "$(date '+%F %T') deep-run end rc=124 model_rc=unknown verify=$v $f" >> "$WLOG"
+  exit 124
+}
+
 if [ "${DEEP_NO_TMUX:-0}" = 1 ]; then
   # Tests / interactive debugging: run straight, inherit this shell's env.
   # 獨立 process group，逾時可一併終止模型與輸出管線。
@@ -149,10 +186,7 @@ if [ "${DEEP_NO_TMUX:-0}" = 1 ]; then
     if [ "$((SECONDS - started))" -ge "${DEEP_JOB_MAX:-3600}" ]; then
       kill -TERM -- "-$inner_pid" 2>/dev/null || true
       wait "$inner_pid" 2>/dev/null
-      printf '124' > "$DEEP_TASK_DIR/$EPOCH.rc"
-      echo 'deep-run: 超過 DEEP_JOB_MAX' >&2
-      echo "$(date '+%F %T') deep-run end rc=124 model_rc=unknown verify=none $f" >> "$WLOG"
-      exit 124
+      deadline_verdict
     fi
     sleep 1
   done
@@ -169,15 +203,21 @@ else
   envstr="$envstr CHEAPCLAUDE_DEFAULT_BACKEND='$CHEAPCLAUDE_DEFAULT_BACKEND' OPENROUTER_MODEL='$OPENROUTER_MODEL'"  # deep-or
   tmux -L deep new-session -d -s "deep-$EPOCH" \
     "$envstr '$INNER' '$DEEP_TASK_FILE' '$d' '$f' '$EPOCH'" || exit 2
+  # kill -9 無法捕捉，R6 存活行為不變（本體仍在 tmux 裡跑）；只有 TERM／INT／HUP（例：TaskStop）才收掉本單 tmux。
+  # handler 收 tmux、寫 rc、記 log 後立刻 exit，不在這裡跑驗收（比照 dc 的 TERM trap）。
+  term_stop() {
+    tmux -L deep kill-session -t "deep-$EPOCH" 2>/dev/null
+    printf '143' > "$DEEP_TASK_DIR/$EPOCH.rc"
+    echo "$(date '+%F %T') deep-run end rc=143 model_rc=unknown verify=none $f" >> "$WLOG"
+    exit 143
+  }
+  trap term_stop TERM INT HUP
   # 輪詢本次 session，逾時只終止這一單。
   started=$SECONDS
   while tmux -L deep has-session -t "deep-$EPOCH" 2>/dev/null; do
     if [ "$((SECONDS - started))" -ge "${DEEP_JOB_MAX:-3600}" ]; then
       tmux -L deep kill-session -t "deep-$EPOCH"
-      printf '124' > "$DEEP_TASK_DIR/$EPOCH.rc"
-      echo 'deep-run: 超過 DEEP_JOB_MAX' >&2
-      echo "$(date '+%F %T') deep-run end rc=124 model_rc=unknown verify=none $f" >> "$WLOG"
-      exit 124
+      deadline_verdict
     fi
     sleep 1
   done

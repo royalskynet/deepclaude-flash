@@ -44,7 +44,7 @@ export PATH="$DC_HOME/bin:$PATH"
 
 # Case 1: matching cwd -> hook must recover the task file and block.
 out=$(printf '{"session_id":"t1","cwd":"%s","stop_hook_active":false}' "$cwd" \
-  | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+  | env -u DEEP_TASK_FILE -u DEEP_PFDIR -u DEEP_GATE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
 case "$out" in
   *'"decision": "block"'*|*block*) echo "ok: by-cwd 命中→block" ;;
   *) echo "FAIL: by-cwd 命中未 block — $out"; rc=1 ;;
@@ -52,7 +52,7 @@ esac
 
 # Case 2: unknown cwd -> no task file -> skip:no-task-file logged, no output.
 out2=$(printf '{"session_id":"t2","cwd":"%s/nope","stop_hook_active":false}' "$cwd" \
-  | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+  | env -u DEEP_TASK_FILE -u DEEP_PFDIR -u DEEP_GATE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
 if tail -1 "$LOG" | grep -q 'skip:no-task-file'; then
   echo "ok: 無 by-cwd 對應→skip:no-task-file 落 log"
 else
@@ -62,14 +62,14 @@ fi
 # Case 3: same session keeps failing -> blocks 2 and 3 (stop_hook_active=true), 4th passes on cap.
 for i in 2 3; do
   o=$(printf '{"session_id":"t1","cwd":"%s","stop_hook_active":true}' "$cwd" \
-    | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+    | env -u DEEP_TASK_FILE -u DEEP_PFDIR -u DEEP_GATE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
   case "$o" in
     *block*"${i}/3"*) echo "ok: 第 $i 次續跑仍 block" ;;
     *) echo "FAIL: 第 $i 次續跑未 block — $o"; rc=1 ;;
   esac
 done
 o4=$(printf '{"session_id":"t1","cwd":"%s","stop_hook_active":true}' "$cwd" \
-  | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+  | env -u DEEP_TASK_FILE -u DEEP_PFDIR -u DEEP_GATE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
 if [ -z "$o4" ] && tail -1 "$LOG" | grep -q 'skip:cap'; then
   echo "ok: 達上限→放行並記 skip:cap"
 else
@@ -78,11 +78,11 @@ fi
 
 # Case 4: stop_hook_active=true but we never blocked this session -> silent pass.
 o5=$(printf '{"session_id":"t9","cwd":"%s","stop_hook_active":true}' "$cwd" \
-  | env -u DEEP_TASK_FILE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+  | env -u DEEP_TASK_FILE -u DEEP_PFDIR -u DEEP_GATE "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
 [ -z "$o5" ] && echo "ok: 別人的 block 續跑→不介入" || { echo "FAIL: 別人的續跑被介入 — $o5"; rc=1; }
 
 o6=$(printf '{"session_id":"none","cwd":"%s"}' "$cwd" \
-  | env -u DEEP_TASK_FILE VERIFY_RC=2 "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
+  | env -u DEEP_TASK_FILE -u DEEP_PFDIR -u DEEP_GATE VERIFY_RC=2 "$HERE/../hooks/deep-stop-gate.sh" 2>&1)
 if [ -z "$o6" ] && tail -1 "$LOG" | grep -q 'none skip:none' && ! grep -q 'none pass' "$LOG"; then
   echo 'ok: rc=2 記 skip:none，不寫 pass'
 else

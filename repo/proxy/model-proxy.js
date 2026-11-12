@@ -159,7 +159,9 @@ function shellUnits(cmd) {
 
 // Compact turns the old rounds into a summary, so loopStats sees them vanish and
 // the 90-round hard stop would move back forever. Remember per session how many
-// rounds were already counted and add the post-compact tail on top.
+// rounds were already counted and add the post-compact tail on top. The round
+// budget check (below) also nudges it +1 when the client resends a rolled-back or
+// frozen history, so the cap is a one-way door rather than a wall at exactly 90.
 // ponytail: summary turns are not counted; upgrade path if compaction itself ever
 // needs a round is to bump offset by one at the shrink instead of just setting it.
 const roundState = new Map();
@@ -463,6 +465,19 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
         const initialTarget = new URL(targetUrl);
         const initialBearer = targetUrl.includes('openrouter') || targetUrl.includes('fireworks');
 
+        // Guard settings, re-read on demand so tests can flip them on one instance.
+        let env;
+        const refreshEnv = () => {
+            env = {
+                LOOP_GUARD,
+                GUARD_HARD: process.env.DC_GUARD_HARD !== 'off',
+                GUARD_ROUNDS: Number(process.env.DC_GUARD_ROUNDS) || 15,
+                GUARD_HARD_NTH: Number(process.env.DC_GUARD_HARD_NTH) || 6,
+            };
+            return env;
+        };
+        refreshEnv();
+
         const allBackends = {};
         if (backends) {
             for (const [name, cfg] of Object.entries(backends)) {
@@ -695,6 +710,54 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             return;
                         }
 
+                        // Round budget: the 90-round hard stop used to be a prompt nudge only — the
+                        // model could ignore it and keep generating (seen 2026-11: 15 rounds past
+                        // 90 with the report prompt in every request). Once the effective count
+                        // crosses GUARD_ROUNDS*GUARD_HARD_NTH, every later /v1/messages is refused
+                        // before it reaches upstream, so no token is spent past the budget. The
+                        // crossing request itself still goes through with the final-report prompt,
+                        // which is the one report chance. Blocking forever (not every Nth) is the
+                        // point: one extra round after the refusal is exactly the hole being closed.
+                        // ponytail: a client without x-claude-code-session-id only sends its visible
+                        // history, so a compact looks like a fresh run and the count restarts —
+                        // deep-run sidesteps this by reusing one session UUID (WO-05); this guard
+                        // makes no promise across proxy restarts (roundState is in-memory). With no
+                        // sid it reads and writes no state at all, so it cannot throw on a legal
+                        // header-less request (test-loop-budget headerless cases cover this).
+                        if (env.LOOP_GUARD && env.GUARD_HARD) {
+                            const sid = String(clientReq.headers['x-claude-code-session-id'] || '');
+                            const budget = env.GUARD_ROUNDS * env.GUARD_HARD_NTH;
+                            const visible = loopStats(parsed.messages).rounds;
+                            let rounds = visible;
+                            if (sid) {
+                                // effectiveRounds only moves when the count it sees is lower than
+                                // what the session has already been credited (a compact shrink) — a
+                                // session that keeps resending a rolled-back history (89, 90, 90, …)
+                                // would sit at 90 forever. A same-or-smaller visible count once the
+                                // budget round (90) has been seen is one more round by construction,
+                                // so count it as last+1. Nothing is ever decremented: "larger than
+                                // last" still carries genuine growth (WO-05 forks).
+                                if (!roundState.has(sid)) sessionRounds(sid, 0);
+                                const prev = roundState.get(sid).last;
+                                rounds = prev > budget - 1 && visible <= prev ? prev + 1 : sessionRounds(sid, visible);
+                            }
+                            if (rounds > Math.round(budget)) {
+                                if (sid) roundState.get(sid).last = rounds;   // the door only closes further
+                                console.error(`[MODEL-PROXY] #${reqId} ROUND BUDGET EXCEEDED ${rounds} > ${budget}, refused before upstream`);
+                                const err = {
+                                    type: "error",
+                                    error: {
+                                        type: "invalid_request_error",
+                                        message: `DEEP_ROUND_BUDGET_EXCEEDED: effective round ${rounds} > ${budget} (DC_GUARD_ROUNDS*DC_GUARD_HARD_NTH). No further upstream requests will be sent for this session; report what is done and list the rest as NOT DONE.`,
+                                    },
+                                };
+                                const buf = Buffer.from(JSON.stringify(err));
+                                clientRes.writeHead(400, { "content-type": "application/json", "content-length": buf.length });
+                                clientRes.end(buf);
+                                return;
+                            }
+                        }
+
                         // Remap Anthropic model names to backend-specific names
                         // (fixed tables, deepseek/openrouter only).
                         const remapped = MODEL_REMAP[state.mode]?.[parsed.model];
@@ -726,9 +789,9 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             if (!isSubagent && prependHarness(parsed, MAIN_HARNESS)) {
                                 console.error(`[MODEL-PROXY] #${reqId} main harness injected`);
                             }
-                            if (!isSubagent && LOOP_GUARD) {
+                            if (!isSubagent && env.LOOP_GUARD) {
                                 const stats = loopStats(parsed.messages);
-                                if (GUARD_HARD) {
+                                if (env.GUARD_HARD) {
                                     stats.rounds = sessionRounds(clientReq.headers['x-claude-code-session-id'], stats.rounds);
                                 }
                                 const nudges = loopNudges(stats);
@@ -943,7 +1006,9 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             server.listen(port, '127.0.0.1', () => {
                 const actualPort = server.address().port;
                 console.error(`[MODEL-PROXY] Listening on 127.0.0.1:${actualPort} → ${targetUrl} (mode: ${state.mode})`);
-                resolve({ port: actualPort, close: () => server.close(), switchMode });
+                // refreshEnv re-reads the guard switches (DC_LOOP_GUARD / DC_GUARD_*) for
+                // in-process callers and self-checks; env vars are fixed for a standalone process.
+                resolve({ port: actualPort, close: () => server.close(), switchMode, refreshEnv });
             });
         }
 

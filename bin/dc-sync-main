@@ -41,7 +41,7 @@ out = json.load(open(seed_p)) if os.path.exists(seed_p) else {}
 # keys that would break or override deepclaude's own model/backend/UI are not mirrored
 SKIP_KEYS = {"env", "model", "statusLine", "effortLevel", "autoCompactWindow", "tui",
              "theme", "sandbox", "channelsEnabled", "disableRemoteControl",
-             "agentPushNotifEnabled", "disableClaudeAiConnectors"}
+             "agentPushNotifEnabled", "disableClaudeAiConnectors", "apiKeyHelper"}  # Anthropic API key must never reach deepclaude (11-12 migration)
 # env: only what hooks read; telemetry/OTEL/proxy env stay off in deepclaude on purpose
 MIRROR_ENV = {"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS", "JEV_TRIAGE_ENABLED", "JEV_PROVIDER",
               "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"}

@@ -9,6 +9,9 @@
 # env that tmux does not carry over is handed to it explicitly by deep-run (see the
 # `env` prefix); DEEP_NO_TMUX=1 direct invocation inherits deep-run's own exports.
 set -u
+# 末尾 `} | tee` 的退出碼是 tee 的 0；沒有 pipefail 時 VERIFY_FAIL 的 1／4 會被吞掉，
+# 呼叫端看到成功。只加 pipefail，不改 tee、sidecar 與 judge rc 的處理。
+set -o pipefail
 # 全身包進 main()：bash 一次解析完整個函式才執行，工單就地改寫本檔時剩下的腳本
 # 不會依舊位元組偏移續讀而錯位（fix-store 9499）。
 main() {
@@ -20,10 +23,21 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 export DEEP_TASK_FILE="$copy"
 CREDS_DIR="${CREDS_DIR:-$HOME/.creds}"
 # GH_TOKEN lives here (not in deep-run) so it never rides the tmux command line.
+# kv mirror 只證明「有檔」，不證明 token 還活（2026-11-03 的檔已 401）；帶進 deep 會讓
+# git push／gh 全掛。先 `gh api user` 驗（token 只放子程序環境，5 秒逾時），失敗才退回
+# gh 登入 token；兩者皆敗就 unset。WLOG 只記來源標籤，不記值。
 GHK="$CREDS_DIR/kv/GITHUB_PERSONAL_ACCESS_TOKEN.txt"
-[ -r "$GHK" ] && GH_TOKEN=$(cat "$GHK") && export GH_TOKEN
-# No kv mirror (fresh machine): fall back to the logged-in gh keyring.
-[ -z "${GH_TOKEN:-}" ] && GH_TOKEN=$(gh auth token 2>/dev/null) && export GH_TOKEN
+# exec 走 PATH 找 gh，看不到呼叫端的函式覆寫；測試因此用 PATH 上的假 gh。
+gh_ok() { GH_TOKEN="$1" perl -e 'alarm 5; exec @ARGV' gh api user >/dev/null 2>&1; }
+GH_TOKEN="" GHSRC=none
+if [ -r "$GHK" ] && kv=$(cat "$GHK") && gh_ok "$kv"; then
+  GH_TOKEN=$kv GHSRC=kv
+elif tok=$(gh auth token 2>/dev/null) && [ -n "$tok" ] && gh_ok "$tok"; then
+  GH_TOKEN=$tok GHSRC=gh
+fi
+[ "$GHSRC" = none ] && unset GH_TOKEN || export GH_TOKEN
+unset kv tok
+echo "$(date '+%F %T') deep-run gh_token=$GHSRC" >> "$WLOG"
 # deep-or: OpenRouter key 比照 GH_TOKEN 在此解析，不經 tmux 命令列。
 ORK="$CREDS_DIR/kv/OPENROUTER_FREEROUTER_API_KEY.txt"
 [ -z "${OPENROUTER_API_KEY:-}" ] && [ -r "$ORK" ] && OPENROUTER_API_KEY=$(cat "$ORK") && export OPENROUTER_API_KEY
@@ -44,10 +58,20 @@ RC="$DC_HOME/work/.deep/$EPOCH.rc"
   # creds-egress-guard PreToolUse 仍在線，故在此解除該變數，不新增漏洞。
   unset CLAUDE_CODE_SUBPROCESS_ENV_SCRUB
 
+  # 統計只讀本次 session 的 transcript：先自己決定 UUID（claude --session-id），
+  # 再寫 epoch→UUID sidecar，事後不靠「cwd 目錄最新 jsonl」猜是哪單（同 cwd 並發必猜錯）。
+  # uuidgen 缺席時改用 /proc 式隨機位元；版本／variant 位元改成 4／8 才是合法 v4。
+  SID=$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z')
+  [ -n "$SID" ] || SID=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n' \
+    | sed -E 's/^(.{12})./\14/; s/^(.{16})./\18/; s/^(.{8})(.{4})(.{4})(.{4})(.{12})/\1-\2-\3-\4-\5/')
+  SIDFILE="$DC_HOME/work/.deep/$EPOCH.session-id"
+  printf '%s' "$SID" > "$SIDFILE"
+
   # Same flags as the pre-split deep-run; the inner loop is the unchanged main body.
   # 工單常以 frontmatter `---` 開頭；裸傳會被 CLI 當成選項（`unknown option '---`，WO-12 10-19），
   # 所以固定加一行前綴，-p 的值永遠不以 `-` 起頭。
   deepclaude -p "Task file:"$'\n'"$(cat "$copy")" --output-format text \
+    --session-id "$SID" \
     --system-prompt-file "$DC_HOME/config/deep-system.md" \
     --append-system-prompt "Working directory: $d — you are already in it. Every relative path in the task resolves under it. Do not search the filesystem for the task's files; if something is missing, \`ls\` here and report what is actually present." \
     --tools Bash,Read,Edit,Write,Glob,Grep \
@@ -69,6 +93,7 @@ RC="$DC_HOME/work/.deep/$EPOCH.rc"
   verify=none
   wo_rc=0
   if command -v "$GATE" >/dev/null 2>&1; then
+    { echo "judge $(basename "$GATE") $f $d ${DEEP_PFDIR:-} --k ${DEEP_VERIFY_K:-2}"; } >> "$DC_HOME/work/.deep/$EPOCH.gate.args" 2>/dev/null
     "$GATE" judge "$f" "$d" "${DEEP_PFDIR:-}" --k "${DEEP_VERIFY_K:-2}"
     wo_rc=$?
     if [ "$wo_rc" = 0 ]; then verify=pass; else verify=fail; fi
@@ -79,11 +104,16 @@ RC="$DC_HOME/work/.deep/$EPOCH.rc"
   # Summary anti-hallucination: append objective transcript stats so the model's final
   # prose is not the only output — a headless run's summary is the one part of it that
   # cannot be verified from the outside. Claude Code names the transcript
-  # directory after the cwd with / and . both replaced by -.
+  # directory after the cwd with / and . both replaced by -, file = <session-id>.jsonl;
+  # 只接受本單 UUID 的檔，缺了就是 none，不退回去挑最新檔。
   SLUG=$(printf '%s' "$d" | sed 's/[\/.]/-/g')
-  TRANS="$(ls -t "$DC_HOME/config/projects/$SLUG/"*.jsonl 2>/dev/null | head -1)"
-  if [ -n "$TRANS" ] && [ -f "$TRANS" ]; then
+  TRANS="$DC_HOME/config/projects/$SLUG/$SID.jsonl"
+  echo "deep-run session_id: $SID"
+  if [ -f "$TRANS" ]; then
     echo "deep-run transcript: tool_use=$(jq -r 'select(.type=="assistant" and .message) | .message.content[]? | select(.type=="tool_use") | .id' "$TRANS" 2>/dev/null | wc -l | tr -d ' ')"
+    # turns/tool_turns/parallel_turns 都是「assistant 訊息數」單位：一條 assistant
+    # 訊息＝一次 API 呼叫（內容被拆塊時同一 message.id 會多行，故略多於輪數）；不等同
+    # Bash shellUnits，也不等同牆鐘，別拿來直接對帳。
     # Fix issue #26: 牆鐘≈輪數，量化每輪是否只發單工具。turns=assistant 回合數；
     # tool_turns=含工具回合數；parallel_turns=單回合多於一個 tool_use 的回合數。
     echo "deep-run turns: turns=$(jq -r 'select(.type=="assistant" and .message) | 1' "$TRANS" 2>/dev/null | wc -l | tr -d ' ') tool_turns=$(jq -r 'select(.type=="assistant" and .message) | [.message.content[]? | select(.type=="tool_use")] | length' "$TRANS" 2>/dev/null | awk '$0>0{n++} END{print n+0}') parallel_turns=$(jq -r 'select(.type=="assistant" and .message) | [.message.content[]? | select(.type=="tool_use")] | length' "$TRANS" 2>/dev/null | awk '$0>1{n++} END{print n+0}')"
